@@ -320,6 +320,16 @@ multi-cloud work lives in [`ROADMAP.md`](./ROADMAP.md). Items are grouped by
 theme and badged with rough size and risk. Open an Issue if you'd like
 something bumped or want to pick one up.
 
+## Overview deck
+
+A 12-slide overview deck — punchy, customer-facing, no real data — lives at
+[`docs/finops-engine-overview.pptx`](./docs/finops-engine-overview.pptx).
+Use it to introduce the engine to a customer or internal team. The
+generator script ([`docs/build_overview_pptx.py`](./docs/build_overview_pptx.py))
+is checked in too; edit and re-run with `python docs/build_overview_pptx.py`
+(requires `python-pptx` — a *docs-only* dependency; the engines themselves
+remain stdlib-only).
+
 ## Versioning & changelog
 
 This project follows [Semantic Versioning](https://semver.org/) applied to

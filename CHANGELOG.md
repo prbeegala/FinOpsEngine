@@ -8,7 +8,15 @@ as detailed in [`VERSIONING.md`](./VERSIONING.md).
 
 ## [Unreleased]
 
-_Nothing yet._
+### Added
+
+- `docs/finops-engine-overview.pptx` — 12-slide overview deck for
+  introducing the engine to customers and internal teams. Covers the
+  problem, the four engines, how it runs, sample output, differentiators
+  vs Advisor / FinOps SaaS, the roadmap, and a five-minute get-started.
+- `docs/build_overview_pptx.py` — script that generates the deck. Run
+  with `python docs/build_overview_pptx.py`. Requires `python-pptx`
+  (docs-only dependency; engines remain stdlib-only).
 
 ## [0.1.1] - 2026-04-29
 
