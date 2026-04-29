@@ -73,6 +73,35 @@ Refinements to the existing four engines.
   resolved from `CODEOWNERS`. Add support for `owner=` / `costcenter=`
   Azure Tags and a YAML override file for orgs without `CODEOWNERS`.
 
+## Issue lifecycle & dedupe 🛡
+
+The current nightly workflow opens **one Issue per owner** and edits it in
+place each run, with title-string matching for dedupe. Findings are filtered
+to HIGH+MED only. That keeps noise low for v0.1.0 but has three real gaps:
+
+- 🛡 🟢 **Label-based dedupe** — replace the fragile
+  `in:title "<owner> — nightly remediation queue"` search with a stable
+  `finops:owner=<slug>` label. Robust to title edits, makes "close all my
+  finops issues" a one-liner for an owner, and survives format changes to
+  the title template.
+- 🛡 🟡 **Per-finding stable fingerprint** — every row in the issue body
+  should carry a deterministic ID, e.g.
+  `sha1(subscription + resourceId + category)`. Today, when the body is
+  re-written nightly, "accept on row 4" loses its anchor because row order
+  can shift. Stable IDs unlock row-level `accept` / `defer` / `reject`
+  state, true tracker reconciliation, and "this finding has been open for
+  N nights" callouts.
+- 🛡 🟡 **Closed-issue handling** — today, if an owner manually closes
+  yesterday's Issue (because they actioned everything), tonight's run will
+  open a new one even if there are no new findings. Decide and document
+  the desired semantics: re-open vs. create-new vs. suppress-until-new.
+  Probably opt-in via a workflow input.
+
+These three plus the already-listed
+[`hidden-waste: persistent state.db`](#engine-improvements) and
+[`context-enricher --plan-only` dry-run](#trust--safety-) are the natural
+"trust the automation enough to roll it out widely" bundle.
+
 ## Trust & safety 🛡
 
 These should land before the engine is rolled out widely.
