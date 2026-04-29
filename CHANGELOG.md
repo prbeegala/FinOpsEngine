@@ -10,6 +10,21 @@ as detailed in [`VERSIONING.md`](./VERSIONING.md).
 
 ### Added
 
+- **Fixture-driven test infrastructure** under `tests/`:
+  - `pyproject.toml` adds an optional `[test]` extra (pytest only; engines
+    remain stdlib-only at runtime).
+  - `tests/conftest.py` imports each engine by file path and exposes a
+    column-aware `assert_csv_matches` helper so snapshot diffs point at
+    the first differing cell, not a 500-line text blob.
+  - `tests/test_rightsizing_peak.py` — 5 fixture JSONs cover every verdict
+    (DOWNSIZE_CANDIDATE high/medium confidence, KEEP, UPSIZE_WARNING,
+    INSUFFICIENT_DATA) plus a guard test on `DECISION_RULES`.
+  - `tests/test_context_enricher.py` — end-to-end test that runs the
+    engine against a synthetic `hidden-waste.csv` with a mocked tag
+    lookup, then snapshots `enriched-*.csv`. Hits all three confidence
+    bands (HIGH/MED/LOW).
+  - `tests/README.md` documents the "drop a `.json` + `.expected.csv`"
+    workflow for adding new fixtures.
 - New FAQ entry — **"Where do the £ figures come from?"** — clarifying
   that headline numbers are sourced from Cost Management `ActualCost`
   (your real bill, post-discount), not retail list price. Per-engine
@@ -18,6 +33,13 @@ as detailed in [`VERSIONING.md`](./VERSIONING.md).
   discount %s on top of actual PAYG run-rate.
 - Top-level README "Currency" section renamed to "Currency and pricing
   source" with a short summary that links to the FAQ entry.
+
+### Notes
+
+- `hidden-waste` and `ri-coverage` test coverage is tracked separately —
+  both require an `az_rest` mocking pattern that this PR doesn't
+  introduce. See [#18](https://github.com/prbeegala/FinOpsEngine/issues/18)
+  follow-ups.
 
 ## [0.1.2] - 2026-04-29
 

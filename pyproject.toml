@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "finops-engine"
+version = "0.1.2"
+description = "Stdlib-only Azure FinOps engines for rightsizing, hidden-waste, RI/SP coverage and per-owner enrichment."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+# Engines themselves are stdlib-only by design — see CONTRIBUTING.md.
+# Test dependencies are declared under [project.optional-dependencies].
+
+[project.optional-dependencies]
+test = ["pytest>=7"]
+docs = ["python-pptx>=1.0"]
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+testpaths = ["tests"]
+addopts = ["-ra", "--strict-markers", "--strict-config"]
+filterwarnings = ["error"]

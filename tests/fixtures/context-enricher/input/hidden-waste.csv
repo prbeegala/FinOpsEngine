@@ -1,0 +1,4 @@
+category,sub_id,sub_name,resource_group,name,resource_id,monthly_gbp,extra
+Orphan managed disk,11111111-1111-1111-1111-111111111111,sub-prod-a,rg-app-data,disk-orphan-001,/subscriptions/11111111-1111-1111-1111-111111111111/resourcegroups/rg-app-data/providers/microsoft.compute/disks/disk-orphan-001,150.00,512GB Premium_LRS / unattached
+Empty App Service Plan,11111111-1111-1111-1111-111111111111,sub-prod-a,rg-web,asp-empty-eu,/subscriptions/11111111-1111-1111-1111-111111111111/resourcegroups/rg-web/providers/microsoft.web/serverfarms/asp-empty-eu,80.00,P1v3 / 0 sites
+Idle Public IP,11111111-1111-1111-1111-111111111111,sub-prod-a,rg-net,pip-leaky-001,/subscriptions/11111111-1111-1111-1111-111111111111/resourcegroups/rg-net/providers/microsoft.network/publicipaddresses/pip-leaky-001,8.00,Standard / unattached
