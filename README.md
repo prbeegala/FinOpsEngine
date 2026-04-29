@@ -313,6 +313,13 @@ The engines are intentionally small and dependency-free. Common extensions:
   layering a small model on top of the deterministic rationale once
   HIGH/MED accept rates are trusted.
 
+## Roadmap
+
+The public backlog of new detectors, engine improvements, integrations, and
+multi-cloud work lives in [`ROADMAP.md`](./ROADMAP.md). Items are grouped by
+theme and badged with rough size and risk. Open an Issue if you'd like
+something bumped or want to pick one up.
+
 ## Contributing
 
 Issues and PRs welcome. The engines deliberately avoid third-party Python
