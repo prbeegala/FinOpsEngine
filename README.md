@@ -34,26 +34,33 @@ Every engine is **read-only**. None of them delete or modify resources. They
 emit Markdown, CSV, and (where appropriate) Azure Policy / Azure Workbook JSON.
 Remediation is always a human decision.
 
-## How it landed at one customer
+## What to expect on a typical run
 
-The first deployment of these engines (a UK retailer, ~20 production
-subscriptions) produced, in a single afternoon:
+The *absolute* numbers vary wildly between tenants — a 50-subscription
+enterprise looks nothing like a 5-subscription startup. The *shape* of the
+findings, however, is remarkably consistent. On a tenant of any size you
+should expect, in a single afternoon:
 
-- **1 of Advisor's downsize recommendations flagged as unsafe** — would have
-  caused a peak-hour outage on a batch workload Advisor had averaged-over.
-- **£9.7k / month (£117k / year) of recoverable hidden waste** that Advisor
-  did not price (mostly old snapshots, empty App Service Plans, and one
-  £2.7k/month unattached ASR seed disk no human had spotted).
-- **A risk-scored RI / Savings-Plan shortlist** that fit within a £5k
-  cancellation-exposure buffer — and quantified the £1.5M of savings that
-  *would* be unlocked by raising the buffer (the binding constraint was
-  procurement, not the data).
+- **A small handful of Advisor downsize recommendations flagged as unsafe** —
+  workloads with bursty or batch profiles that Advisor's average-based logic
+  would have downsized into a peak-hour outage. Even one is worth the run.
+- **A material chunk of recoverable hidden waste** that Advisor doesn't
+  price — typically dominated by old snapshots, empty App Service Plans,
+  unattached premium disks (especially ASR seed disks), idle public IPs,
+  and stopped-but-not-deallocated VMs. Single-digit-percent of monthly
+  spend is a normal first-pass result.
+- **A risk-scored RI / Savings-Plan shortlist** that fits inside whatever
+  cancellation-exposure buffer your procurement function has set — and a
+  quantified view of how much *additional* commitment would be unlocked by
+  raising that buffer. The binding constraint is almost always procurement
+  policy, not the data.
 - **One GitHub Issue per domain owner** the next morning, with `accept` /
-  `defer` / `reject` checkboxes — replacing a recurring 90-minute FinOps
-  weekly walk-through of a spreadsheet.
+  `defer` / `reject` checkboxes — replacing whatever recurring spreadsheet
+  walkthrough your FinOps function does today.
 
-You should expect different absolute numbers; the *shape* of the findings is
-remarkably consistent across tenants.
+The samples under [`samples/`](./samples/) show the full report set against
+a synthetic Contoso tenant so you can see the output shape before you run
+anything against your own data.
 
 ---
 
