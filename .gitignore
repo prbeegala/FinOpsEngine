@@ -20,3 +20,4 @@ Thumbs.db
 
 # Office lock files
 ~$*
+.pytest_cache/
