@@ -23,16 +23,36 @@ shortlist** bounded by your configured cancellation-exposure buffer.
 
 ## Usage
 
+Pick a scope. The engine requires **either** `--subs` (explicit list) **or**
+`--all-subs` (tenant-wide), not both.
+
 ```pwsh
+# Explicit subscription list
 python ri_coverage.py `
   --subs "<id1>,<id2>,..." `
   --months 3 `
+  --refund-buffer-gbp 5000 `
+  --out-dir ./out/ri-coverage
+
+# Every enabled subscription in the current tenant
+python ri_coverage.py `
+  --all-subs `
   --refund-buffer-gbp 5000 `
   --out-dir ./out/ri-coverage
 ```
 
 `az login` required. Tool retries 429s with exponential backoff; expect
 ~30–90s per 20 subs.
+
+### Scope flags
+
+| Flag | Purpose |
+|---|---|
+| `--subs <a,b,c>` | Run against this exact list. Accepts IDs or display names. |
+| `--all-subs` | Enumerate `az account list` and run against every **Enabled** subscription. |
+| `--exclude-subs <a,b>` | When using `--all-subs`, skip these IDs/names. |
+| `--tenant <guid>` | Limit `--all-subs` to a single tenant. |
+| `--include-disabled` | Include subs whose state is not Enabled. |
 
 ## Outputs
 

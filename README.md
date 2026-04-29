@@ -74,18 +74,21 @@ cd FinOpsEngine
 az login
 az account set --subscription <default-sub-id>
 
-# 2. Run any engine standalone
+# 2. Run any engine standalone — pick your scope
+#    --subs <a,b,c>   explicit list
+#    --all-subs       every enabled sub in the current tenant
+#    (add --exclude-subs / --tenant / --include-disabled as needed)
 python tools/rightsizing-peak/rightsizing_peak.py `
-  --subs "<sub1>,<sub2>,<sub3>" `
+  --all-subs `
   --days 30 `
   --out-dir ./out/peak-rightsizing
 
 python tools/hidden-waste/hidden_waste.py `
-  --subs "<sub1>,<sub2>,<sub3>" `
+  --all-subs `
   --out-dir ./out/hidden-waste
 
 python tools/ri-coverage/ri_coverage.py `
-  --subs "<sub1>,<sub2>,<sub3>" `
+  --all-subs `
   --months 3 `
   --refund-buffer-gbp 5000 `
   --out-dir ./out/ri-coverage
@@ -96,6 +99,11 @@ python tools/context-enricher/context_enricher.py `
   --rightsizing-csv  ./out/peak-rightsizing/tenant-peak-rightsizing-savings-<date>.csv `
   --out-dir ./out/enriched
 ```
+
+> **Tip.** Pin a sandbox or two for your first run rather than going
+> tenant-wide. Use `--subs "<one-id>"` and grow the scope once you're
+> happy with the output. `--all-subs --exclude-subs "<sandbox-id>"` is
+> the safest tenant-wide default.
 
 Linux / macOS users: substitute `\` for the PowerShell line-continuation
 backtick. The Python is portable; only the shell quoting differs.

@@ -8,8 +8,25 @@ as detailed in [`VERSIONING.md`](./VERSIONING.md).
 
 ## [Unreleased]
 
+_Nothing yet._
+
+## [0.1.2] - 2026-04-29
+
 ### Added
 
+- All three subscription-scoped engines (`rightsizing-peak`,
+  `hidden-waste`, `ri-coverage`) now accept `--all-subs` to enumerate
+  every Enabled subscription via `az account list` and run tenant-wide,
+  removing the need to pass an explicit `--subs` list.
+- `--exclude-subs <a,b>` skips named subscriptions when `--all-subs` is
+  used (typical: sandboxes, frozen archives). Accepts IDs or display
+  names.
+- `--tenant <guid>` limits `--all-subs` to a single tenant — useful for
+  guest accounts that span tenants.
+- `--include-disabled` flag for the rare case where Disabled
+  subscriptions should also be scanned (default: skip).
+- The engines log `--all-subs resolved N subscription(s).` on startup
+  so the resolved scope is visible in CI output.
 - `docs/finops-engine-overview.pptx` — 12-slide overview deck for
   introducing the engine to customers and internal teams. Covers the
   problem, the four engines, how it runs, sample output, differentiators
@@ -17,6 +34,23 @@ as detailed in [`VERSIONING.md`](./VERSIONING.md).
 - `docs/build_overview_pptx.py` — script that generates the deck. Run
   with `python docs/build_overview_pptx.py`. Requires `python-pptx`
   (docs-only dependency; engines remain stdlib-only).
+
+### Changed
+
+- `--subs` is no longer marked `required=True` on its own. Every engine
+  now requires **exactly one of** `--subs` or `--all-subs` (enforced by
+  an argparse mutually-exclusive group). Supplying neither, or both,
+  fails fast with a clear argparse error before any Azure call is made.
+- Per-tool READMEs and the top-level Quick start now show both the
+  explicit-list and `--all-subs` paths, with a recommended safe default
+  (`--all-subs --exclude-subs <sandbox>`).
+
+### Migration notes
+
+Existing automations that pass `--subs "<a>,<b>,<c>"` are unaffected —
+the flag still works exactly as before. To switch to tenant-wide,
+replace `--subs "<list>"` with `--all-subs` and (optionally)
+`--exclude-subs "<list>"`.
 
 ## [0.1.1] - 2026-04-29
 
@@ -91,6 +125,7 @@ Initial public release.
 - `LICENSE` (MIT), `.gitignore`, `requirements.txt` (stdlib-only — file
   documents the contract).
 
-[Unreleased]: https://github.com/prbeegala/FinOpsEngine/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/prbeegala/FinOpsEngine/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/prbeegala/FinOpsEngine/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/prbeegala/FinOpsEngine/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/prbeegala/FinOpsEngine/releases/tag/v0.1.0

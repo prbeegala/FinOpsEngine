@@ -33,17 +33,45 @@ For every non-managed VM in the target subscription(s):
 
 ## Usage
 
+Pick a scope. The engine requires **either** `--subs` (explicit list) **or**
+`--all-subs` (tenant-wide), not both.
+
 ```pwsh
+# Explicit subscription list
 python rightsizing_peak.py `
   --subs "<subId1>,<subId2>,<subId3>" `
   --days 30 `
   --out-dir ./out/peak-rightsizing `
   --max-workers 8
+
+# Every enabled subscription in the current tenant
+python rightsizing_peak.py `
+  --all-subs `
+  --days 30 `
+  --out-dir ./out/peak-rightsizing
+
+# Tenant-wide, but skip sandboxes / archive
+python rightsizing_peak.py `
+  --all-subs `
+  --exclude-subs "sandbox-1,sandbox-2,archive-prod" `
+  --tenant "<tenant-guid>" `
+  --days 30 `
+  --out-dir ./out/peak-rightsizing
 ```
 
 `az login` required. Uses Azure CLI under the hood. Expect ~1–2 min per 100
 VMs (rate-limited by Azure Monitor's `metrics list` throttle, not by this
 engine).
+
+### Scope flags
+
+| Flag | Purpose |
+|---|---|
+| `--subs <a,b,c>` | Run against this exact list. Accepts IDs or display names. |
+| `--all-subs` | Enumerate `az account list` and run against every **Enabled** subscription. |
+| `--exclude-subs <a,b>` | When using `--all-subs`, skip these IDs/names (typical: sandboxes, frozen archives). |
+| `--tenant <guid>` | Limit `--all-subs` to a single tenant — useful for guest accounts. |
+| `--include-disabled` | Include subs whose state is not Enabled (default: skip). |
 
 ## Outputs
 

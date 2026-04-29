@@ -31,14 +31,39 @@ the guardrails.
 
 ## Inputs
 
+Pick a scope. The engine requires **either** `--subs` (explicit list) **or**
+`--all-subs` (tenant-wide), not both.
+
 ```pwsh
+# Explicit subscription list
 python hidden_waste.py `
   --subs "<id1>,<id2>,..." `
+  --out-dir ./out/hidden-waste
+
+# Every enabled subscription in the current tenant
+python hidden_waste.py `
+  --all-subs `
+  --out-dir ./out/hidden-waste
+
+# Tenant-wide, but skip sandboxes
+python hidden_waste.py `
+  --all-subs `
+  --exclude-subs "sandbox-1,sandbox-2" `
   --out-dir ./out/hidden-waste
 ```
 
 `az login` required. Tool retries 429 / 503 with exponential backoff. Expect
 ~3–5 min per 20 subs, dominated by Cost Management throttling.
+
+### Scope flags
+
+| Flag | Purpose |
+|---|---|
+| `--subs <a,b,c>` | Run against this exact list. Accepts IDs or display names. |
+| `--all-subs` | Enumerate `az account list` and run against every **Enabled** subscription. |
+| `--exclude-subs <a,b>` | When using `--all-subs`, skip these IDs/names. |
+| `--tenant <guid>` | Limit `--all-subs` to a single tenant. |
+| `--include-disabled` | Include subs whose state is not Enabled. |
 
 ## Outputs
 

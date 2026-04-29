@@ -743,16 +743,60 @@ def run(subs: list[str], out_dir: Path):
           f"~£{total_monthly:,.0f}/mo (~£{total_monthly * 12:,.0f}/yr).")
 
 
+def _resolve_subs(args) -> list[str]:
+    """Return the list of subscription IDs to run against.
+
+    Honours --subs (explicit list) or --all-subs (enumerate via
+    `az account list`), with optional --tenant / --exclude-subs /
+    --include-disabled filters. Raises SystemExit with a human-readable
+    message if the resolution yields nothing.
+    """
+    if args.subs:
+        return [s.strip() for s in args.subs.split(",") if s.strip()]
+    state_filter = "" if args.include_disabled else "[?state=='Enabled']"
+    query = state_filter + ".{id:id,name:name,tenantId:tenantId}"
+    accounts = az(["account", "list", "--query", query, "-o", "json"])
+    if args.tenant:
+        accounts = [a for a in accounts if a.get("tenantId") == args.tenant]
+    excludes = set()
+    if args.exclude_subs:
+        excludes = {s.strip() for s in args.exclude_subs.split(",")
+                    if s.strip()}
+    ids = [a["id"] for a in accounts
+           if a["id"] not in excludes
+           and a.get("name", "") not in excludes]
+    if not ids:
+        raise SystemExit(
+            "--all-subs resolved zero subscriptions. Check `az account "
+            "list` and any --tenant / --exclude-subs / "
+            "--include-disabled filters.")
+    print(f"[engine] --all-subs resolved {len(ids)} subscription(s).")
+    return ids
+
+
 def main():
     ap = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    ap.add_argument("--subs", required=True,
-                    help="Comma-separated subscription IDs.")
+    src = ap.add_mutually_exclusive_group(required=True)
+    src.add_argument("--subs",
+                     help="Comma-separated subscription IDs (or names).")
+    src.add_argument("--all-subs", action="store_true",
+                     help="Run across every enabled subscription returned "
+                          "by `az account list`. Pair with --exclude-subs "
+                          "and/or --tenant to narrow scope.")
+    ap.add_argument("--exclude-subs",
+                    help="Comma-separated subscription IDs or names to "
+                         "skip when --all-subs is used (e.g. sandboxes).")
+    ap.add_argument("--tenant",
+                    help="Limit --all-subs to a single tenant ID.")
+    ap.add_argument("--include-disabled", action="store_true",
+                    help="Include subscriptions whose state is not "
+                         "Enabled (default: skip them).")
     ap.add_argument("--out-dir", required=True, help="Output directory.")
     args = ap.parse_args()
-    subs = [s.strip() for s in args.subs.split(",") if s.strip()]
+    subs = _resolve_subs(args)
     run(subs, Path(args.out_dir))
 
 
