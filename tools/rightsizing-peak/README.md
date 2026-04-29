@@ -81,6 +81,55 @@ DECISION_RULES = {
 }
 ```
 
+### Tuning thresholds at the command line
+
+Every value above can be overridden per-run without touching the source.
+Pass any of:
+
+```text
+--downsize-cpu-p95-max     (default 40.0)
+--downsize-mem-p95-max     (default 50.0)
+--downsize-cpu-p99-high-conf  (default 50.0)
+--downsize-mem-p99-high-conf  (default 60.0)
+--upsize-cpu-p95-min       (default 80.0)
+--upsize-mem-p95-min       (default 85.0)
+--min-data-coverage        (default 0.80)
+```
+
+Example — be more aggressive about downsizing (treat anything below 80%
+P95 CPU as a candidate) while keeping the upsize bar where it is:
+
+```pwsh
+python tools/rightsizing-peak/rightsizing_peak.py `
+  --subs "<sub1>,<sub2>" `
+  --days 30 `
+  --out-dir ./out/peak-rightsizing `
+  --downsize-cpu-p95-max 80 `
+  --downsize-mem-p95-max 80 `
+  --upsize-cpu-p95-min   90 `
+  --upsize-mem-p95-min   90
+```
+
+The engine validates the resulting rule set on startup and refuses to run
+if a downsize threshold is greater than or equal to the matching upsize
+threshold (which would make verdicts ambiguous), or if any value is out of
+range. You'll get a clear `Threshold validation failed:` message instead of
+a silent miscalculation.
+
+**Recommended starting points:**
+
+| Profile | Downsize CPU P95 | Downsize Mem P95 | Upsize CPU P95 | Notes |
+|---|---|---|---|---|
+| **Conservative (default)** | 40 | 50 | 80 | Safe for spiky/batch workloads. Use this until you've run for several nightly cycles. |
+| **Balanced** | 60 | 65 | 85 | Once Advisor-unsafe count is consistently low and reviewers are catching obvious cases. |
+| **Aggressive** | 80 | 80 | 90 | Mature FinOps function with rollback plans and good observability. Expect more candidates and more reviewer load. |
+
+Whichever profile you pick, **lock it for at least one full month** before
+re-tuning — you need the trend data to tell whether a change in candidate
+count is the threshold or the workload.
+
+### Adding new SKU families
+
 The `DOWNSIZE_LADDER` map (also in the source file) is the *only* place an
 explicit target SKU is proposed. If the current size has no entry there, the
 engine still emits `DOWNSIZE_CANDIDATE` — but leaves `target_sku` blank and

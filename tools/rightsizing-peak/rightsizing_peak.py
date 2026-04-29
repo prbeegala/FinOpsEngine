@@ -655,11 +655,90 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
                     help="Output directory for reports.")
     ap.add_argument("--max-workers", type=int, default=8,
                     help="Parallel metric fetches (default 8).")
+
+    # Decision-rule overrides. Defaults match DECISION_RULES.
+    g = ap.add_argument_group(
+        "decision thresholds",
+        "Override the engine's downsize/upsize thresholds. "
+        "All values are percentages (0-100) except --min-data-coverage "
+        "(0.0-1.0). See README for guidance on tuning.")
+    g.add_argument("--downsize-cpu-p95-max", type=float,
+                   default=DECISION_RULES["downsize_cpu_p95_max"],
+                   help="P95 CPU%% must be below this to be a downsize "
+                        "candidate (default %(default)s).")
+    g.add_argument("--downsize-mem-p95-max", type=float,
+                   default=DECISION_RULES["downsize_mem_p95_max"],
+                   help="P95 memory-used%% must be below this to be a "
+                        "downsize candidate (default %(default)s).")
+    g.add_argument("--downsize-cpu-p99-high-conf", type=float,
+                   default=DECISION_RULES["downsize_cpu_p99_high_conf"],
+                   help="P99 CPU%% below this promotes the candidate to "
+                        "HIGH confidence (default %(default)s).")
+    g.add_argument("--downsize-mem-p99-high-conf", type=float,
+                   default=DECISION_RULES["downsize_mem_p99_high_conf"],
+                   help="P99 memory-used%% below this promotes the candidate "
+                        "to HIGH confidence (default %(default)s).")
+    g.add_argument("--upsize-cpu-p95-min", type=float,
+                   default=DECISION_RULES["upsize_cpu_p95_min"],
+                   help="P95 CPU%% at or above this triggers UPSIZE_WARNING "
+                        "(default %(default)s).")
+    g.add_argument("--upsize-mem-p95-min", type=float,
+                   default=DECISION_RULES["upsize_mem_p95_min"],
+                   help="P95 memory-used%% at or above this triggers "
+                        "UPSIZE_WARNING (default %(default)s).")
+    g.add_argument("--min-data-coverage", type=float,
+                   default=DECISION_RULES["min_data_coverage"],
+                   help="Fraction (0.0-1.0) of expected hourly samples "
+                        "required before the engine emits a verdict; "
+                        "below this the VM is INSUFFICIENT_DATA "
+                        "(default %(default)s).")
     return ap.parse_args(argv)
+
+
+def _apply_threshold_overrides(a: argparse.Namespace) -> None:
+    """Mutate the module-level DECISION_RULES dict from CLI args.
+
+    Validates the resulting rule set so an obvious mis-configuration
+    (e.g. downsize threshold above upsize threshold) fails fast with
+    a clear message rather than silently producing odd verdicts.
+    """
+    DECISION_RULES["downsize_cpu_p95_max"] = a.downsize_cpu_p95_max
+    DECISION_RULES["downsize_mem_p95_max"] = a.downsize_mem_p95_max
+    DECISION_RULES["downsize_cpu_p99_high_conf"] = a.downsize_cpu_p99_high_conf
+    DECISION_RULES["downsize_mem_p99_high_conf"] = a.downsize_mem_p99_high_conf
+    DECISION_RULES["upsize_cpu_p95_min"] = a.upsize_cpu_p95_min
+    DECISION_RULES["upsize_mem_p95_min"] = a.upsize_mem_p95_min
+    DECISION_RULES["min_data_coverage"] = a.min_data_coverage
+
+    errors = []
+    for k in ("downsize_cpu_p95_max", "downsize_mem_p95_max",
+              "downsize_cpu_p99_high_conf", "downsize_mem_p99_high_conf",
+              "upsize_cpu_p95_min", "upsize_mem_p95_min"):
+        v = DECISION_RULES[k]
+        if not 0.0 <= v <= 100.0:
+            errors.append(f"--{k.replace('_','-')}={v} must be in [0, 100]")
+    cov = DECISION_RULES["min_data_coverage"]
+    if not 0.0 <= cov <= 1.0:
+        errors.append(f"--min-data-coverage={cov} must be in [0.0, 1.0]")
+    if (DECISION_RULES["downsize_cpu_p95_max"]
+            >= DECISION_RULES["upsize_cpu_p95_min"]):
+        errors.append(
+            "--downsize-cpu-p95-max must be strictly less than "
+            "--upsize-cpu-p95-min (otherwise a single VM could match both "
+            "rules and the verdict would be undefined).")
+    if (DECISION_RULES["downsize_mem_p95_max"]
+            >= DECISION_RULES["upsize_mem_p95_min"]):
+        errors.append(
+            "--downsize-mem-p95-max must be strictly less than "
+            "--upsize-mem-p95-min.")
+    if errors:
+        raise SystemExit("Threshold validation failed:\n  - "
+                         + "\n  - ".join(errors))
 
 
 def main(argv: list[str]) -> int:
     a = parse_args(argv)
+    _apply_threshold_overrides(a)
     subs = [s.strip() for s in a.subs.split(",") if s.strip()]
     out = Path(a.out_dir).resolve()
     summary = run(subs, days=a.days, out_dir=out,
