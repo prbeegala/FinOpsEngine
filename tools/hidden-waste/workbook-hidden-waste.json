@@ -1,0 +1,162 @@
+{
+  "version": "Notebook/1.0",
+  "$schema": "https://github.com/Microsoft/Application-Insights-Workbooks/blob/master/schema/workbook.json",
+  "items": [
+    {
+      "type": 1,
+      "content": {
+        "json": "# FinOps Engine — Hidden Waste & Lifecycle\n\nSeven recurring waste classes that Advisor under-reports or misses, priced against actual Cost Management spend. Source: `hidden-waste` engine (CSV uploaded as Log Analytics custom table `HiddenWaste_CL`). Pair with the audit-mode Azure Policy starter pack in `tools/hidden-waste/policy/`."
+      },
+      "name": "title"
+    },
+    {
+      "type": 9,
+      "content": {
+        "version": "KqlParameterItem/1.0",
+        "parameters": [
+          {
+            "id": "p_workspace",
+            "version": "KqlParameterItem/1.0",
+            "name": "Workspace",
+            "type": 5,
+            "isRequired": true,
+            "typeSettings": {
+              "resourceTypeFilter": { "microsoft.operationalinsights/workspaces": true },
+              "additionalResourceOptions": []
+            }
+          },
+          {
+            "id": "p_category",
+            "version": "KqlParameterItem/1.0",
+            "name": "Category",
+            "type": 2,
+            "multiSelect": true,
+            "quote": "'",
+            "delimiter": ",",
+            "typeSettings": { "additionalResourceOptions": [], "showDefault": false },
+            "jsonData": "[\"Unattached managed disks\",\"Unused public IPs\",\"Orphan NICs\",\"Stopped-not-deallocated VMs\",\"Old snapshots (>90d)\",\"Empty App Service Plans\",\"Idle Standard load balancers\"]",
+            "value": [
+              "Unattached managed disks",
+              "Old snapshots (>90d)",
+              "Empty App Service Plans",
+              "Stopped-not-deallocated VMs",
+              "Idle Standard load balancers",
+              "Unused public IPs"
+            ]
+          },
+          {
+            "id": "p_sub",
+            "version": "KqlParameterItem/1.0",
+            "name": "Subscription",
+            "type": 2,
+            "multiSelect": true,
+            "quote": "'",
+            "delimiter": ",",
+            "typeSettings": { "additionalResourceOptions": [], "showDefault": false },
+            "query": "HiddenWaste_CL | where TimeGenerated > ago(7d) | summarize by sub_name_s",
+            "queryType": 0,
+            "resourceType": "microsoft.operationalinsights/workspaces"
+          }
+        ]
+      },
+      "name": "params"
+    },
+    {
+      "type": 1,
+      "content": { "json": "## Headline\n\nTotal recoverable monthly £ across the selected categories and subscriptions." },
+      "name": "section_headline"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "HiddenWaste_CL\n| where TimeGenerated > ago(7d)\n| where category_s in ({p_category})\n| where sub_name_s in ({p_sub})\n| summarize Findings=count(), MonthlyGBP=sum(monthly_gbp_d)\n| extend AnnualisedGBP = MonthlyGBP * 12",
+        "size": 4,
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "tiles",
+        "tileSettings": {
+          "titleContent": { "columnMatch": "Findings" },
+          "leftContent": { "columnMatch": "MonthlyGBP", "formatter": 0, "numberFormat": { "unit": 0, "options": { "style": "currency", "currency": "GBP" } } },
+          "rightContent": { "columnMatch": "AnnualisedGBP", "formatter": 0, "numberFormat": { "unit": 0, "options": { "style": "currency", "currency": "GBP" } } }
+        }
+      },
+      "name": "headline_tiles"
+    },
+    {
+      "type": 1,
+      "content": { "json": "## By category\n\nWhere the £ actually is. Use this to prioritise the next remediation sprint." },
+      "name": "section_category"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "HiddenWaste_CL\n| where TimeGenerated > ago(7d)\n| where category_s in ({p_category})\n| where sub_name_s in ({p_sub})\n| summarize Count=count(), MonthlyGBP=sum(monthly_gbp_d) by Category=category_s\n| extend AnnualisedGBP = MonthlyGBP * 12\n| order by MonthlyGBP desc",
+        "size": 0,
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "barchart",
+        "chartSettings": {
+          "xAxis": "Category",
+          "yAxis": ["MonthlyGBP"],
+          "ySettings": { "min": 0, "numberFormatSettings": { "unit": 0, "options": { "style": "currency", "currency": "GBP" } } }
+        }
+      },
+      "name": "category_chart"
+    },
+    {
+      "type": 1,
+      "content": { "json": "## Top 25 individual offenders\n\nDeletion or rightsizing here gives the fastest payback. Rows tagged `cost_mgmt` are priced from real spend; `estimate` rows fall back to list price (e.g. never-attached ASR replicas)." },
+      "name": "section_offenders"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "HiddenWaste_CL\n| where TimeGenerated > ago(7d)\n| where category_s in ({p_category})\n| where sub_name_s in ({p_sub})\n| top 25 by monthly_gbp_d desc\n| project Sub=sub_name_s, ResourceGroup=resource_group_s, Resource=name_s, Category=category_s, MonthlyGBP=monthly_gbp_d, Source=cost_source_s",
+        "size": 0,
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "table",
+        "gridSettings": {
+          "formatters": [
+            { "columnMatch": "MonthlyGBP", "formatter": 0, "numberFormat": { "unit": 0, "options": { "style": "currency", "currency": "GBP" } } }
+          ]
+        }
+      },
+      "name": "offenders_table"
+    },
+    {
+      "type": 1,
+      "content": { "json": "## Subscription leaderboard\n\nWhich subs leak the most. Pair with the corresponding domain owner before any policy promotion." },
+      "name": "section_subs"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "HiddenWaste_CL\n| where TimeGenerated > ago(7d)\n| where category_s in ({p_category})\n| where sub_name_s in ({p_sub})\n| summarize Findings=count(), MonthlyGBP=sum(monthly_gbp_d) by Sub=sub_name_s\n| order by MonthlyGBP desc",
+        "size": 0,
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "table",
+        "gridSettings": {
+          "formatters": [
+            { "columnMatch": "MonthlyGBP", "formatter": 0, "numberFormat": { "unit": 0, "options": { "style": "currency", "currency": "GBP" } } }
+          ]
+        }
+      },
+      "name": "subs_table"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "---\n\n**How to read this workbook**\n\n- All findings are **read-only**. The engine does not delete or modify resources.\n- Promote any audit-mode policy in `tools/hidden-waste/policy/` to `deny` only after a 30-day audit cycle that confirms zero false positives in the target scope.\n- `Old snapshots (>90d)` and `Stopped-not-deallocated VMs` have caveats — see `_note` annotations in the corresponding policy JSON.\n- Cross-check against `workbook-rightsizing-peak` and `workbook-ri-coverage` before committing remediation: a workload flagged here may also be flagged for downsize or for RI coverage; the order of operations matters.\n\n_Source: `tools/hidden-waste/`. Maintained by the FinOps Engine maintainers._"
+      },
+      "name": "footer"
+    }
+  ],
+  "fallbackResourceIds": [],
+  "fromTemplateId": "finops-hidden-waste"
+}

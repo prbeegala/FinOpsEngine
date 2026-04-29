@@ -1,0 +1,24 @@
+{
+  "displayName": "Audit idle Standard load balancers",
+  "description": "Flags Standard load balancers with no LB rules \u2014 incurs hourly charge regardless of traffic.",
+  "mode": "Indexed",
+  "policyType": "Custom",
+  "policyRule": {
+    "if": {
+      "allOf": [
+        {
+          "field": "type",
+          "equals": "Microsoft.Network/loadBalancers"
+        },
+        {
+          "field": "Microsoft.Network/loadBalancers/sku.name",
+          "equals": "Standard"
+        }
+      ]
+    },
+    "then": {
+      "effect": "audit"
+    }
+  },
+  "parameters": {}
+}

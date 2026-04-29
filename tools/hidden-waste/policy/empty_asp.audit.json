@@ -1,0 +1,24 @@
+{
+  "displayName": "Audit empty App Service Plans",
+  "description": "Flags App Service Plans with zero hosted apps. Common waste class after app deletion.",
+  "mode": "All",
+  "policyType": "Custom",
+  "policyRule": {
+    "if": {
+      "allOf": [
+        {
+          "field": "type",
+          "equals": "Microsoft.Web/serverfarms"
+        },
+        {
+          "field": "Microsoft.Web/serverfarms/numberOfSites",
+          "equals": 0
+        }
+      ]
+    },
+    "then": {
+      "effect": "audit"
+    }
+  },
+  "parameters": {}
+}

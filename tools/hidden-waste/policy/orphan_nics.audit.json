@@ -1,0 +1,28 @@
+{
+  "displayName": "Audit orphan network interfaces",
+  "description": "Flags NICs with no virtualMachine or privateEndpoint association.",
+  "mode": "All",
+  "policyType": "Custom",
+  "policyRule": {
+    "if": {
+      "allOf": [
+        {
+          "field": "type",
+          "equals": "Microsoft.Network/networkInterfaces"
+        },
+        {
+          "field": "Microsoft.Network/networkInterfaces/virtualMachine.id",
+          "exists": "false"
+        },
+        {
+          "field": "Microsoft.Network/networkInterfaces/privateEndpoint.id",
+          "exists": "false"
+        }
+      ]
+    },
+    "then": {
+      "effect": "audit"
+    }
+  },
+  "parameters": {}
+}

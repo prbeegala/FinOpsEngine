@@ -1,0 +1,17 @@
+{
+  "displayName": "Audit snapshots older than 90 days",
+  "description": "Flags compute snapshots created more than 90 days ago \u2014 typical retention waste.",
+  "mode": "Indexed",
+  "policyType": "Custom",
+  "policyRule": {
+    "if": {
+      "field": "type",
+      "equals": "Microsoft.Compute/snapshots"
+    },
+    "then": {
+      "effect": "audit"
+    }
+  },
+  "parameters": {},
+  "_note": "Policy can't filter by `timeCreated` directly \u2014 use this blanket rule combined with a Workbook/KQL filter on age."
+}

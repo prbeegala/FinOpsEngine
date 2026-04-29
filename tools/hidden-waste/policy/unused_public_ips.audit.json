@@ -1,0 +1,28 @@
+{
+  "displayName": "Audit unused Public IP addresses",
+  "description": "Flags Public IP addresses with no IP configuration and no NAT-gateway association \u2014 typical orphan after a VM/LB delete.",
+  "mode": "All",
+  "policyType": "Custom",
+  "policyRule": {
+    "if": {
+      "allOf": [
+        {
+          "field": "type",
+          "equals": "Microsoft.Network/publicIPAddresses"
+        },
+        {
+          "field": "Microsoft.Network/publicIPAddresses/ipConfiguration.id",
+          "exists": "false"
+        },
+        {
+          "field": "Microsoft.Network/publicIPAddresses/natGateway.id",
+          "exists": "false"
+        }
+      ]
+    },
+    "then": {
+      "effect": "audit"
+    }
+  },
+  "parameters": {}
+}

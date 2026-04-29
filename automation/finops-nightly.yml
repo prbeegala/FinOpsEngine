@@ -1,0 +1,153 @@
+name: FinOps Engine nightly refresh
+
+# Phase 4 deliverable from tools/context-enricher/.
+#
+# This workflow runs the three FinOps engines (peak rightsizing, RI coverage,
+# hidden waste) nightly, joins their output with resource-tag context via
+# context-enricher, and publishes per-owner GitHub Issues so domain
+# teams see a curated, approve-ready remediation queue every morning — no
+# spreadsheet round-trip.
+#
+# DEPLOYMENT NOTES
+# ----------------
+# 1. Copy this file to `.github/workflows/finops-nightly.yml` in the
+#    repository where you want the issues raised.
+# 2. Configure OIDC federated auth from the repo to a service principal that
+#    has `Reader` + `Cost Management Reader` on the relevant management group
+#    or the in-scope subscriptions. See:
+#    https://learn.microsoft.com/azure/developer/github/connect-from-azure
+# 3. Set repo variables / secrets:
+#       AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID
+#       FINOPS_SUBS         (comma-sep list of subscription IDs in scope)
+#       FINOPS_REFUND_BUFFER (optional, default 5000 — your GBP cap to Mar 2027)
+# 4. Issue routing requires a `GH_PAT` (or `GITHUB_TOKEN` with `issues: write`)
+#    plus repo-level CODEOWNERS for each `Owned By` slug so the bot can
+#    @-mention the right team automatically.
+#
+# This workflow is idempotent: if a HIGH-confidence finding is unchanged
+# between runs, the existing issue is updated rather than re-opened.
+
+on:
+  schedule:
+    - cron: '0 5 * * *'   # 05:00 UTC nightly — before UK working hours.
+  workflow_dispatch:
+    inputs:
+      subs:
+        description: "Comma-separated subscription IDs (defaults to FINOPS_SUBS var)"
+        required: false
+        type: string
+
+permissions:
+  id-token: write       # OIDC for `azure/login`.
+  contents: read
+  issues: write         # Open / update remediation issues.
+
+jobs:
+  finops-refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      SUBS: ${{ inputs.subs || vars.FINOPS_SUBS }}
+      REFUND_BUFFER: ${{ vars.FINOPS_REFUND_BUFFER || '5000' }}
+      OUT_BASE: ${{ github.workspace }}/finops-out
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Prep output dirs
+        run: |
+          mkdir -p "$OUT_BASE/PeakRightsizing" \
+                   "$OUT_BASE/RICoverage" \
+                   "$OUT_BASE/HiddenWaste" \
+                   "$OUT_BASE/Enriched"
+
+      - name: Phase 1 — peak rightsizing
+        working-directory: tools/rightsizing-peak
+        run: |
+          python -u rightsizing_peak.py \
+            --subs "$SUBS" \
+            --out-dir "$OUT_BASE/PeakRightsizing" \
+            --mode tenant
+        continue-on-error: true
+
+      - name: Phase 2 — RI / SP coverage
+        working-directory: tools/ri-coverage
+        run: |
+          python -u ri_coverage.py \
+            --subs "$SUBS" \
+            --months 3 \
+            --refund-buffer-gbp "$REFUND_BUFFER" \
+            --out-dir "$OUT_BASE/RICoverage"
+        continue-on-error: true
+
+      - name: Phase 3 — hidden waste & lifecycle
+        working-directory: tools/hidden-waste
+        run: |
+          python -u hidden_waste.py \
+            --subs "$SUBS" \
+            --out-dir "$OUT_BASE/HiddenWaste"
+        continue-on-error: true
+
+      - name: Phase 4 — context enrichment
+        working-directory: tools/context-enricher
+        run: |
+          HIDDEN_CSV=$(ls -t "$OUT_BASE/HiddenWaste"/hidden-waste-*.csv 2>/dev/null | head -1 || true)
+          RIGHT_CSV=$(ls -t "$OUT_BASE/PeakRightsizing"/tenant-peak-rightsizing-savings-*.csv 2>/dev/null | head -1 || true)
+
+          ARGS="--out-dir $OUT_BASE/Enriched"
+          [ -n "$HIDDEN_CSV" ] && ARGS="$ARGS --hidden-waste-csv $HIDDEN_CSV"
+          [ -n "$RIGHT_CSV"  ] && ARGS="$ARGS --rightsizing-csv $RIGHT_CSV"
+
+          if [ -z "$HIDDEN_CSV" ] && [ -z "$RIGHT_CSV" ]; then
+            echo "::warning::No engine CSVs found — skipping enrichment."
+            exit 0
+          fi
+          python -u context_enricher.py $ARGS
+
+      - name: Upload artefacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: finops-${{ github.run_id }}
+          path: ${{ env.OUT_BASE }}/**
+          retention-days: 30
+
+      - name: Open / update per-owner issues
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          shopt -s nullglob
+          for f in "$OUT_BASE"/Enriched/issues/*.md; do
+            owner=$(basename "$f" .md | sed -E 's/-[0-9]{8}$//')
+            title="[FinOps] $owner — nightly remediation queue ($(date -u +%Y-%m-%d))"
+            existing=$(gh issue list --search "in:title \"$owner — nightly remediation queue\"" \
+                                     --state open --json number --jq '.[0].number' || true)
+            if [ -n "$existing" ]; then
+              gh issue edit "$existing" --title "$title" --body-file "$f"
+            else
+              gh issue create --title "$title" --body-file "$f" \
+                --label "finops,auto-generated" || true
+            fi
+          done
+
+      - name: Headline summary
+        if: success()
+        run: |
+          ls -lah "$OUT_BASE"/Enriched/ || true
+          echo "---"
+          tail -n 40 "$OUT_BASE"/Enriched/enriched-*.md | head -n 80 || true

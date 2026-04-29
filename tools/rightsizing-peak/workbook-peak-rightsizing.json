@@ -1,0 +1,156 @@
+{
+  "version": "Notebook/1.0",
+  "$schema": "https://github.com/Microsoft/Application-Insights-Workbooks/blob/master/schema/workbook.json",
+  "items": [
+    {
+      "type": 1,
+      "content": {
+        "json": "# FinOps Engine — Peak-Aware Rightsizing\n\nWorkload-aware (P95 / P99) rightsizing dashboard for the FinOps team. Replaces Azure Advisor's average-based logic for spiky / batch workloads. Source: `rightsizing-peak` engine."
+      },
+      "name": "title"
+    },
+    {
+      "type": 9,
+      "content": {
+        "version": "KqlParameterItem/1.0",
+        "parameters": [
+          {
+            "id": "p_sub",
+            "version": "KqlParameterItem/1.0",
+            "name": "Subscription",
+            "type": 6,
+            "isRequired": true,
+            "multiSelect": true,
+            "quote": "'",
+            "delimiter": ",",
+            "value": []
+          },
+          {
+            "id": "p_window",
+            "version": "KqlParameterItem/1.0",
+            "name": "Window",
+            "type": 4,
+            "isRequired": true,
+            "value": { "durationMs": 2592000000 },
+            "typeSettings": {
+              "selectableValues": [
+                { "durationMs": 604800000 },
+                { "durationMs": 1209600000 },
+                { "durationMs": 2592000000 },
+                { "durationMs": 7776000000 }
+              ]
+            }
+          }
+        ]
+      },
+      "name": "params"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "## VM inventory + decision class\n\nResource-Graph view of all non-managed VMs in scope. The `decision` column comes from the engine's CSV output once uploaded as a custom log; until then this view shows the raw fleet with peak metrics joined in line."
+      },
+      "name": "section_inventory"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "Resources\n| where type =~ 'microsoft.compute/virtualmachines'\n| where subscriptionId in ({p_sub})\n| where resourceGroup !startswith 'databricks-rg-' and resourceGroup !startswith 'mc_'\n| where name !startswith 'aks-'\n| extend size = tostring(properties.hardwareProfile.vmSize),\n         os = tostring(properties.storageProfile.osDisk.osType),\n         power = tostring(properties.extended.instanceView.powerState.code)\n| project subscriptionId, resourceGroup, name, location, size, os, power\n| order by subscriptionId asc, resourceGroup asc, name asc",
+        "size": 1,
+        "queryType": 1,
+        "resourceType": "microsoft.resourcegraph/resources"
+      },
+      "name": "vm_inventory"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "## Peak CPU (P95 / P99) — last window\n\nSpark line per VM. Anything sustained above 80% P95 is an upsize candidate; sustained below 40% with low memory is a downsize candidate."
+      },
+      "name": "section_peak_cpu"
+    },
+    {
+      "type": 10,
+      "content": {
+        "chartId": "metrics-cpu-peak",
+        "version": "MetricsItem/2.0",
+        "size": 0,
+        "chartType": 2,
+        "resourceType": "microsoft.compute/virtualmachines",
+        "metricScope": 0,
+        "resourceParameter": "p_sub",
+        "resourceIds": [],
+        "timeContextFromParameter": "p_window",
+        "metrics": [
+          {
+            "namespace": "microsoft.compute/virtualmachines",
+            "metric": "microsoft.compute/virtualmachines--Percentage CPU",
+            "aggregation": 3,
+            "splitBy": null
+          }
+        ],
+        "title": "Percentage CPU (avg) — sanity check"
+      },
+      "name": "cpu_avg"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "## Available memory (bytes) — minimum across window\n\nLow `Available Memory` (close to zero) for sustained periods means **upsize** even when CPU looks fine. The engine converts this to `% memory used` against the SKU's total RAM."
+      },
+      "name": "section_mem"
+    },
+    {
+      "type": 10,
+      "content": {
+        "chartId": "metrics-mem-min",
+        "version": "MetricsItem/2.0",
+        "size": 0,
+        "chartType": 2,
+        "resourceType": "microsoft.compute/virtualmachines",
+        "metricScope": 0,
+        "resourceParameter": "p_sub",
+        "resourceIds": [],
+        "timeContextFromParameter": "p_window",
+        "metrics": [
+          {
+            "namespace": "microsoft.compute/virtualmachines",
+            "metric": "microsoft.compute/virtualmachines--Available Memory Bytes",
+            "aggregation": 1,
+            "splitBy": null
+          }
+        ],
+        "title": "Available Memory Bytes (min)"
+      },
+      "name": "mem_min"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "## Advisor cost recommendations (raw)\n\nThe engine's job is to **diff against this view** — flagging any Advisor 'Shutdown / Resize' rec that the peak data shows would be unsafe. Compare against the engine's CSV output `advisor_unsafe = true` rows."
+      },
+      "name": "section_advisor"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AdvisorResources\n| where type =~ 'microsoft.advisor/recommendations'\n| where subscriptionId in ({p_sub})\n| where properties.category =~ 'Cost'\n| where properties.impactedField =~ 'microsoft.compute/virtualmachines'\n| extend impactedValue = tostring(properties.impactedValue),\n         shortDesc = tostring(properties.shortDescription.problem),\n         savings = todouble(properties.extendedProperties.annualSavingsAmount)\n| project subscriptionId, resourceGroup, impactedValue, shortDesc, savings\n| order by savings desc",
+        "size": 1,
+        "queryType": 1,
+        "resourceType": "microsoft.resourcegraph/resources"
+      },
+      "name": "advisor_recs"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "---\n\n**How to read this workbook**\n\n- Use the **Subscription** filter to scope to a pilot domain (e.g. Prod, PreProd, NonProd).\n- The engine's CSV output (uploaded as a custom log table `PeakRightsizing_CL` is the recommended step 2) joins per-VM `decision`, `cpu_p95`, `mem_used_p95`, `advisor_unsafe`, `proposed_size`, `confidence` into one view here.\n- Anything with `advisor_unsafe = true` is the headline number for FinOps weekly review.\n- Refund-buffer guardrail ((configurable, default £5k)) is enforced by the RI engine, not this one.\n\n_Maintained by the FinOps Engine maintainers. Source: `tools/rightsizing-peak/`._"
+      },
+      "name": "footer"
+    }
+  ],
+  "fallbackResourceIds": [],
+  "fromTemplateId": "finops-peak-rightsizing"
+}

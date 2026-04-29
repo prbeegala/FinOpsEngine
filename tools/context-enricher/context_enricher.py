@@ -1,0 +1,542 @@
+"""
+context-enricher — Part of the FinOps Engine — context enrichment & per-owner remediation queue.
+
+What it does
+============
+Reads any of the engine output CSVs from Phases 1–3, joins each finding with
+its resource-tag context via Resource Graph (owner, criticality, environment,
+cost-centre, application), classifies each finding's *approve-readiness*
+confidence, and emits per-owner GitHub Issue body templates so the next
+nightly run can post them as Issues / PRs against your FinOps repo with no
+spreadsheet round-trip.
+
+Confidence model (deterministic, by design — no LLM here)
+---------------------------------------------------------
+- HIGH:  has owner tag AND (criticality OR environment) AND monthly_gbp ≥ £100
+- MED:   has owner OR criticality, monthly_gbp ≥ £25
+- LOW:   no useful tags OR monthly_gbp < £25
+
+LOW findings are still enumerated in the report but are *not* auto-issued —
+they belong in the platform-team backlog as tagging-debt, not as remediation
+work.
+
+Usage
+-----
+    python context_enricher.py \
+        --hidden-waste-csv ./out/hidden-waste/hidden-waste-<date>.csv \
+        --rightsizing-csv ./out/peak-rightsizing/tenant-peak-rightsizing-savings-<date>.csv \
+        --out-dir ./out/enriched
+
+`az login` required. Tool batches 100 resource IDs per Resource Graph query
+and retries 429/503 with exponential backoff (same pattern as Phases 1–3).
+"""
+from __future__ import annotations
+
+import argparse
+import csv
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+from collections import defaultdict
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from pathlib import Path
+
+# ---------------------------------------------------------------------------
+# Tag conventions — case-insensitive lookup, first match wins.
+# ---------------------------------------------------------------------------
+
+OWNER_KEYS       = ("owned by", "managed by", "owner", "team", "domain",
+                    "approval group", "support group", "department",
+                    "responsibleteam", "ops_owner")
+CRITICALITY_KEYS = ("business criticality", "criticality", "service tier",
+                    "businesscriticality", "tier", "businesstier")
+ENVIRONMENT_KEYS = ("environment", "env")
+COSTCENTRE_KEYS  = ("cost centre", "cost center", "costcenter", "costcentre",
+                    "cost_centre", "cost_center")
+APP_KEYS         = ("service", "product", "application", "app", "appname",
+                    "applicationname", "project")
+
+# Placeholder values commonly used as placeholders that should be treated as "no value".
+TAG_PLACEHOLDERS = {"untagged", "n/a", "na", "tbc", "tbd", "none", "-", ""}
+
+# Confidence thresholds (£ / month).
+HIGH_GBP_FLOOR = 100.0
+MED_GBP_FLOOR  = 25.0
+
+# Resource Graph batch size.
+GRAPH_BATCH = 100
+
+# ---------------------------------------------------------------------------
+# Shell helpers (mirrors phases 1–3)
+# ---------------------------------------------------------------------------
+
+def _is_win() -> bool:
+    return sys.platform.startswith("win")
+
+
+def _q(s: str) -> str:
+    if not s or any(c in s for c in ' \t"^&|<>()'):
+        return '"' + s.replace('"', '\\"') + '"'
+    return s
+
+
+def az(args: list[str]) -> dict | list:
+    cmd = ["az", *args, "-o", "json"]
+    if _is_win():
+        flat = [(" ".join(a.split()) if "\n" in a else a) for a in cmd]
+        p = subprocess.run(" ".join(_q(a) for a in flat),
+                           capture_output=True, text=True, shell=True)
+    else:
+        p = subprocess.run(cmd, capture_output=True, text=True)
+    if p.returncode != 0:
+        raise RuntimeError(f"az failed: {' '.join(cmd[:6])}...\n{p.stderr[:600]}")
+    return json.loads(p.stdout) if p.stdout.strip() else {}
+
+
+def az_rest(method: str, url: str, body: dict, max_retries: int = 6) -> dict:
+    import time, random
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False,
+                                     encoding="utf-8") as f:
+        json.dump(body, f)
+        body_path = f.name
+    try:
+        last = None
+        for attempt in range(max_retries):
+            try:
+                return az(["rest", "--method", method, "--url", url,
+                           "--body", f"@{body_path}",
+                           "--headers", "Content-Type=application/json"])
+            except RuntimeError as e:
+                msg = str(e); last = e
+                if "429" in msg or "Too Many Requests" in msg or "503" in msg:
+                    delay = min(60, (2 ** attempt) + random.uniform(0, 1.5))
+                    print(f"    ... rate-limited, sleeping {delay:.1f}s "
+                          f"(attempt {attempt + 1}/{max_retries})", flush=True)
+                    time.sleep(delay)
+                    continue
+                raise
+        raise last if last else RuntimeError("az rest failed")
+    finally:
+        try: os.unlink(body_path)
+        except OSError: pass
+
+
+# ---------------------------------------------------------------------------
+# Resource Graph: tags lookup, batched
+# ---------------------------------------------------------------------------
+
+GRAPH_URL = ("https://management.azure.com/providers/Microsoft.ResourceGraph"
+             "/resources?api-version=2022-10-01")
+
+
+def fetch_tags_for_ids(ids: list[str]) -> dict[str, dict[str, str]]:
+    """Return {resource_id (lower) -> {tag_key_lower: value}} for the given ids."""
+    out: dict[str, dict[str, str]] = {}
+    for i in range(0, len(ids), GRAPH_BATCH):
+        batch = ids[i:i + GRAPH_BATCH]
+        in_clause = ",".join("'" + b.lower().replace("'", "''") + "'" for b in batch)
+        kql = (f"Resources | where tolower(id) in ({in_clause}) "
+               f"| project id=tolower(id), tags")
+        body = {"query": kql, "options": {"$top": GRAPH_BATCH}}
+        try:
+            resp = az_rest("POST", GRAPH_URL, body)
+        except RuntimeError as e:
+            print(f"  ! graph batch failed ({len(batch)} ids): {e}", flush=True)
+            continue
+        for row in resp.get("data", []):
+            rid = (row.get("id") or "").lower()
+            tags = row.get("tags") or {}
+            out[rid] = {str(k).lower(): str(v) for k, v in tags.items()}
+        print(f"  [ok] tag lookup: {min(i + GRAPH_BATCH, len(ids))}/{len(ids)}",
+              flush=True)
+    return out
+
+
+def fetch_vm_id_by_name(sub_id: str, vm_name: str) -> str | None:
+    """Resolve a VM's full resource id from its short name (rightsizing CSV)."""
+    kql = (f"Resources | where type =~ 'microsoft.compute/virtualmachines' "
+           f"and subscriptionId =~ '{sub_id}' and name =~ '{vm_name}' "
+           f"| project id | take 1")
+    body = {"query": kql}
+    try:
+        resp = az_rest("POST", GRAPH_URL, body)
+    except RuntimeError:
+        return None
+    rows = resp.get("data", [])
+    return (rows[0].get("id") if rows else None)
+
+
+# ---------------------------------------------------------------------------
+# CSV loaders
+# ---------------------------------------------------------------------------
+
+@dataclass
+class Finding:
+    source: str                 # 'hidden_waste' / 'rightsizing'
+    category: str
+    sub_id: str
+    sub_name: str
+    resource_group: str
+    name: str
+    resource_id: str
+    monthly_gbp: float
+    annual_savings_gbp: float = 0.0
+    extra: str = ""
+    tags: dict[str, str] = field(default_factory=dict)
+    owner: str = ""
+    criticality: str = ""
+    environment: str = ""
+    cost_centre: str = ""
+    application: str = ""
+    confidence: str = "LOW"
+    rationale: str = ""
+
+
+def load_hidden_waste(path: Path) -> list[Finding]:
+    out: list[Finding] = []
+    with open(path, encoding="utf-8") as f:
+        for r in csv.DictReader(f):
+            out.append(Finding(
+                source="hidden_waste",
+                category=r.get("category", ""),
+                sub_id=r.get("sub_id", ""),
+                sub_name=r.get("sub_name", ""),
+                resource_group=r.get("resource_group", ""),
+                name=r.get("name", ""),
+                resource_id=r.get("resource_id", ""),
+                monthly_gbp=float(r.get("monthly_gbp") or 0.0),
+                extra=r.get("extra", ""),
+            ))
+    return out
+
+
+def load_rightsizing(path: Path) -> list[Finding]:
+    """Load the tenant rightsizing-savings CSV."""
+    out: list[Finding] = []
+    with open(path, encoding="utf-8") as f:
+        for r in csv.DictReader(f):
+            save = float(r.get("SaveGBP") or 0.0)
+            out.append(Finding(
+                source="rightsizing",
+                category=f"Rightsize {r.get('Cur', '')} → {r.get('Next', '')}",
+                sub_id="",  # filled in via lookup below
+                sub_name=r.get("Sub", ""),
+                resource_group="",
+                name=r.get("VM", ""),
+                resource_id="",
+                monthly_gbp=save / 12.0,
+                annual_savings_gbp=save,
+                extra=f"{r.get('OS','')} / {r.get('Loc','')}",
+            ))
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Enrichment & confidence
+# ---------------------------------------------------------------------------
+
+def first_match(tags: dict[str, str], keys: tuple[str, ...]) -> str:
+    for k in keys:
+        v = tags.get(k)
+        if v is None:
+            continue
+        s = str(v).strip()
+        if s and s.lower() not in TAG_PLACEHOLDERS:
+            return s
+    return ""
+
+
+def classify(f: Finding) -> None:
+    f.owner       = first_match(f.tags, OWNER_KEYS)
+    f.criticality = first_match(f.tags, CRITICALITY_KEYS)
+    f.environment = first_match(f.tags, ENVIRONMENT_KEYS)
+    f.cost_centre = first_match(f.tags, COSTCENTRE_KEYS)
+    f.application = first_match(f.tags, APP_KEYS)
+
+    has_owner = bool(f.owner)
+    has_crit  = bool(f.criticality)
+    has_env   = bool(f.environment)
+
+    if has_owner and (has_crit or has_env) and f.monthly_gbp >= HIGH_GBP_FLOOR:
+        f.confidence = "HIGH"
+        f.rationale = ("Owner + criticality/environment context present and "
+                       f"value (£{f.monthly_gbp:.0f}/mo) clears the auto-issue floor.")
+    elif (has_owner or has_crit) and f.monthly_gbp >= MED_GBP_FLOOR:
+        f.confidence = "MED"
+        bits = []
+        if not has_owner: bits.append("missing owner tag")
+        if not has_crit:  bits.append("missing criticality tag")
+        f.rationale = ("Partial context (" + ", ".join(bits) + ") — review "
+                       "before auto-issuing.")
+    else:
+        f.confidence = "LOW"
+        if not has_owner and not has_crit:
+            f.rationale = ("Untagged — belongs in the tagging-debt backlog, "
+                           "not the remediation queue.")
+        else:
+            f.rationale = (f"Below £{MED_GBP_FLOOR:.0f}/mo threshold — bulk-handle "
+                           "in next quarterly clean-up.")
+
+
+# ---------------------------------------------------------------------------
+# Output writers
+# ---------------------------------------------------------------------------
+
+def slug(s: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", (s or "unowned").lower()).strip("-") or "unowned"
+
+
+def write_enriched_csv(path: Path, findings: list[Finding]) -> None:
+    fields = ["source", "category", "sub_name", "resource_group", "name",
+              "resource_id", "monthly_gbp", "annual_savings_gbp",
+              "owner", "criticality", "environment", "cost_centre",
+              "application", "confidence", "rationale", "extra"]
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(fields)
+        for v in findings:
+            w.writerow([v.source, v.category, v.sub_name, v.resource_group,
+                        v.name, v.resource_id, f"{v.monthly_gbp:.2f}",
+                        f"{v.annual_savings_gbp:.2f}", v.owner, v.criticality,
+                        v.environment, v.cost_centre, v.application,
+                        v.confidence, v.rationale, v.extra])
+
+
+def write_summary_md(path: Path, findings: list[Finding]) -> None:
+    by_conf = defaultdict(list)
+    for f in findings:
+        by_conf[f.confidence].append(f)
+    by_owner: dict[str, list[Finding]] = defaultdict(list)
+    for f in findings:
+        if f.confidence in ("HIGH", "MED"):
+            by_owner[f.owner or "(unowned)"].append(f)
+
+    total_monthly = sum(f.monthly_gbp for f in findings)
+    auto_monthly  = sum(f.monthly_gbp for f in by_conf["HIGH"])
+    review_monthly = sum(f.monthly_gbp for f in by_conf["MED"])
+    debt_monthly   = sum(f.monthly_gbp for f in by_conf["LOW"])
+
+    L = []
+    L.append("# Context-enriched findings — FinOps Engine")
+    L.append("")
+    L.append(f"**Generated**: {datetime.now(timezone.utc):%Y-%m-%d %H:%M UTC}  ")
+    L.append(f"**Findings ingested**: {len(findings)}")
+    L.append("")
+    L.append("## Confidence breakdown")
+    L.append("")
+    L.append("| Band | Count | Monthly £ | Routing |")
+    L.append("|---|---:|---:|---|")
+    L.append(f"| HIGH (auto-issue ready) | {len(by_conf['HIGH'])} | "
+             f"£{auto_monthly:,.0f} | Domain owner GitHub Issue |")
+    L.append(f"| MED  (review first) | {len(by_conf['MED'])} | "
+             f"£{review_monthly:,.0f} | FinOps weekly triage |")
+    L.append(f"| LOW  (tagging debt / sub-£25) | {len(by_conf['LOW'])} | "
+             f"£{debt_monthly:,.0f} | Platform-team backlog |")
+    L.append(f"| **Total** | **{len(findings)}** | **£{total_monthly:,.0f}** | |")
+    L.append("")
+    L.append("## Auto-issue queue by owner")
+    L.append("")
+    if not by_owner:
+        L.append("_No HIGH/MED findings._")
+    else:
+        L.append("| Owner | Count | Monthly £ | Bundle |")
+        L.append("|---|---:|---:|---|")
+        for owner in sorted(by_owner.keys(),
+                            key=lambda k: -sum(f.monthly_gbp for f in by_owner[k])):
+            items = by_owner[owner]
+            mo = sum(f.monthly_gbp for f in items)
+            L.append(f"| {owner} | {len(items)} | £{mo:,.0f} | "
+                     f"`issues/{slug(owner)}.md` |")
+    L.append("")
+    L.append("## Top 25 individual findings")
+    L.append("")
+    L.append("| Owner | Sub | Resource | Category | Confidence | £/mo |")
+    L.append("|---|---|---|---|---|---:|")
+    for f in sorted(findings, key=lambda x: -x.monthly_gbp)[:25]:
+        L.append(f"| {f.owner or '_(untagged)_'} | {f.sub_name} | {f.name} | "
+                 f"{f.category} | {f.confidence} | £{f.monthly_gbp:,.0f} |")
+    L.append("")
+    L.append("## Tagging debt (top 10 LOW by £)")
+    L.append("")
+    debt_top = sorted(by_conf["LOW"], key=lambda x: -x.monthly_gbp)[:10]
+    if not debt_top:
+        L.append("_None — every finding has at least owner or criticality._")
+    else:
+        L.append("| Sub | Resource | Category | £/mo |")
+        L.append("|---|---|---|---:|")
+        for f in debt_top:
+            L.append(f"| {f.sub_name} | {f.name} | {f.category} | "
+                     f"£{f.monthly_gbp:,.0f} |")
+    L.append("")
+    L.append("---")
+    L.append("")
+    L.append("_Generated by `context-enricher`. Source: phase 1 / 2 / 3 "
+             "engine CSVs. No deletes performed; this is a review aid._")
+    path.write_text("\n".join(L), encoding="utf-8")
+
+
+def write_owner_issue(path: Path, owner: str, items: list[Finding]) -> None:
+    items = sorted(items, key=lambda x: -x.monthly_gbp)
+    monthly = sum(f.monthly_gbp for f in items)
+    annual  = monthly * 12
+
+    L = []
+    L.append(f"## FinOps remediation queue — {owner or 'Unowned'}")
+    L.append("")
+    L.append(f"**{len(items)} findings · ~£{monthly:,.0f} / month "
+             f"(£{annual:,.0f} / yr) recoverable.**")
+    L.append("")
+    L.append("> Generated by the FinOps Engine automation. Each row links back "
+             "to the engine that surfaced it; deletion / rightsizing remains "
+             "your call. Reply on this issue with `accept`, `defer`, or "
+             "`reject` per row to update the tracker.")
+    L.append("")
+    L.append("| # | Resource | Category | Confidence | Criticality | "
+             "Environment | £/mo |")
+    L.append("|---:|---|---|---|---|---|---:|")
+    for i, f in enumerate(items, 1):
+        L.append(f"| {i} | `{f.name}` ({f.sub_name}/{f.resource_group}) | "
+                 f"{f.category} | {f.confidence} | {f.criticality or '—'} | "
+                 f"{f.environment or '—'} | £{f.monthly_gbp:,.0f} |")
+    L.append("")
+    L.append("### Source data")
+    L.append("")
+    seen_sources = sorted({f.source for f in items})
+    for s in seen_sources:
+        if s == "hidden_waste":
+            L.append("- **Hidden waste & lifecycle** — orphan disks/IPs/NICs, "
+                     "old snapshots, empty App Service Plans, "
+                     "stopped-not-deallocated VMs, idle Standard load balancers. "
+                     "Engine: `tools/hidden-waste/`. Pricing: 30-day "
+                     "Cost Management actuals with list-price fallback.")
+        elif s == "rightsizing":
+            L.append("- **Peak-aware rightsizing** — 90-day P95 CPU + memory "
+                     "headroom analysis. Engine: `tools/rightsizing-peak/`. "
+                     "Only downsizes that preserve 30% headroom on observed peak.")
+    L.append("")
+    L.append("### Suggested next step")
+    L.append("")
+    L.append("1. Eyeball the top 3 by £ — these are 80% of the spend.")
+    L.append("2. For HIGH-confidence rows, raise a change ticket against the "
+             "named resource group.")
+    L.append("3. For MED rows, confirm criticality / environment with the "
+             "platform team before action.")
+    L.append("4. Reply on this issue per row to close the loop.")
+    path.write_text("\n".join(L), encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# Orchestration
+# ---------------------------------------------------------------------------
+
+def run(hidden_waste_csv: Path | None,
+        rightsizing_csv: Path | None,
+        out_dir: Path) -> None:
+    out_dir.mkdir(parents=True, exist_ok=True)
+    issues_dir = out_dir / "issues"
+    issues_dir.mkdir(exist_ok=True)
+
+    findings: list[Finding] = []
+    if hidden_waste_csv:
+        print(f"[enricher] Loading hidden-waste: {hidden_waste_csv.name}",
+              flush=True)
+        findings += load_hidden_waste(hidden_waste_csv)
+    if rightsizing_csv:
+        print(f"[enricher] Loading rightsizing: {rightsizing_csv.name}",
+              flush=True)
+        findings += load_rightsizing(rightsizing_csv)
+
+    if not findings:
+        print("[enricher] No findings loaded.")
+        return
+
+    # Resolve missing resource ids (rightsizing CSV needs a lookup).
+    rs = [f for f in findings if f.source == "rightsizing" and not f.resource_id]
+    if rs:
+        # We need sub IDs — group by sub_name first.
+        names_by_sub = defaultdict(list)
+        for f in rs:
+            names_by_sub[f.sub_name].append(f)
+        # Get a sub_id -> sub_name map from the hidden-waste set if present.
+        sub_id_by_name = {}
+        for f in findings:
+            if f.source == "hidden_waste" and f.sub_id:
+                sub_id_by_name[f.sub_name] = f.sub_id
+        # Resolve any remaining via az.
+        for sname in names_by_sub:
+            if sname in sub_id_by_name:
+                continue
+            try:
+                resp = az(["account", "list", "--query",
+                           f"[?name=='{sname}'].id", "-o", "tsv"])
+                if isinstance(resp, list) and resp:
+                    sub_id_by_name[sname] = resp[0]
+            except Exception:
+                pass
+        print(f"[enricher] Resolving resource IDs for "
+              f"{len(rs)} rightsizing rows...", flush=True)
+        for f in rs:
+            sid = sub_id_by_name.get(f.sub_name, "")
+            if not sid:
+                continue
+            f.sub_id = sid
+            rid = fetch_vm_id_by_name(sid, f.name)
+            if rid:
+                f.resource_id = rid
+
+    # Tag enrichment.
+    ids = [f.resource_id for f in findings if f.resource_id]
+    print(f"[enricher] Looking up tags for {len(ids)} resource IDs "
+          f"(batches of {GRAPH_BATCH})...", flush=True)
+    tag_map = fetch_tags_for_ids(ids) if ids else {}
+
+    for f in findings:
+        f.tags = tag_map.get(f.resource_id.lower(), {})
+        classify(f)
+
+    # Output.
+    date = datetime.now(timezone.utc).strftime("%Y%m%d")
+    csv_path = out_dir / f"enriched-{date}.csv"
+    md_path  = out_dir / f"enriched-{date}.md"
+    write_enriched_csv(csv_path, findings)
+    write_summary_md(md_path, findings)
+
+    # Per-owner issue bundles for HIGH+MED.
+    by_owner: dict[str, list[Finding]] = defaultdict(list)
+    for f in findings:
+        if f.confidence in ("HIGH", "MED"):
+            by_owner[f.owner or "_unowned"].append(f)
+    for owner, items in by_owner.items():
+        write_owner_issue(issues_dir / f"{slug(owner)}-{date}.md",
+                          owner if owner != "_unowned" else "Unowned", items)
+
+    print(f"[enricher] Done.")
+    print(f"  - {csv_path}")
+    print(f"  - {md_path}")
+    print(f"  - {issues_dir}/  ({len(by_owner)} per-owner issue templates)")
+    high = sum(1 for f in findings if f.confidence == "HIGH")
+    med  = sum(1 for f in findings if f.confidence == "MED")
+    low  = sum(1 for f in findings if f.confidence == "LOW")
+    high_gbp = sum(f.monthly_gbp for f in findings if f.confidence == "HIGH")
+    print(f"[enricher] Confidence: HIGH={high} (£{high_gbp:,.0f}/mo), "
+          f"MED={med}, LOW={low}.")
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--hidden-waste-csv", type=Path)
+    ap.add_argument("--rightsizing-csv", type=Path)
+    ap.add_argument("--out-dir", type=Path, required=True)
+    args = ap.parse_args()
+    if not args.hidden_waste_csv and not args.rightsizing_csv:
+        ap.error("Provide at least one of --hidden-waste-csv / --rightsizing-csv.")
+    run(args.hidden_waste_csv, args.rightsizing_csv, args.out_dir)
+
+
+if __name__ == "__main__":
+    main()
+

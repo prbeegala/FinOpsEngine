@@ -1,0 +1,12 @@
+# FinOps Engine has no third-party Python dependencies.
+# It shells out to the Azure CLI (`az`) for all Azure interaction.
+#
+# Required tooling on the host:
+#   - Python 3.10+
+#   - Azure CLI (`az`) 2.55+
+#   - `az login` against a tenant where the caller has at minimum:
+#       Reader + Cost Management Reader on the in-scope subscriptions
+#       (Resource Graph + Monitor metrics + Advisor reads come with Reader)
+#
+# This file is intentionally empty — the engines run on the Python standard
+# library only. Listed here for clarity / future-proofing.

@@ -1,0 +1,109 @@
+{
+  "version": "Notebook/1.0",
+  "$schema": "https://github.com/Microsoft/Application-Insights-Workbooks/blob/master/schema/workbook.json",
+  "items": [
+    {
+      "type": 1,
+      "content": {
+        "json": "# FinOps Engine — RI / Savings-Plan Coverage\n\nWorkload-aware coverage map for Reservations and Compute Savings Plans across your Azure tenant. Source: `ri-coverage` engine (CSV uploaded as a Log Analytics custom table `RICoverage_CL`).\n\nUse this workbook to **find the binding constraint** — usually the configured refund buffer — and decide what to commit next."
+      },
+      "name": "title"
+    },
+    {
+      "type": 9,
+      "content": {
+        "version": "KqlParameterItem/1.0",
+        "parameters": [
+          {
+            "id": "p_workspace",
+            "version": "KqlParameterItem/1.0",
+            "name": "Workspace",
+            "type": 5,
+            "isRequired": true,
+            "typeSettings": {
+              "resourceTypeFilter": { "microsoft.operationalinsights/workspaces": true },
+              "additionalResourceOptions": []
+            }
+          },
+          {
+            "id": "p_risk",
+            "version": "KqlParameterItem/1.0",
+            "name": "Risk",
+            "type": 2,
+            "multiSelect": true,
+            "quote": "'",
+            "delimiter": ",",
+            "typeSettings": {
+              "additionalResourceOptions": [],
+              "showDefault": false
+            },
+            "jsonData": "[\"LOW\",\"MEDIUM\",\"HIGH\"]",
+            "value": ["LOW", "MEDIUM"]
+          }
+        ]
+      },
+      "name": "params"
+    },
+    {
+      "type": 1,
+      "content": { "json": "## Coverage gap by family × region\n\nBars are annual PAYG £ — the biggest opportunity absent the buffer constraint." },
+      "name": "section_gap"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "RICoverage_CL\n| where TimeGenerated > ago(7d)\n| where risk_s in ({p_risk})\n| summarize annual_payg=sum(annual_payg_gbp_d), annual_savings=sum(annual_savings_gbp_d) by family_s, location_s\n| top 25 by annual_payg desc\n| project Family=family_s, Region=location_s, AnnualPAYG=annual_payg, AnnualSavings=annual_savings",
+        "size": 0,
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "barchart",
+        "chartSettings": { "xAxis": "Family", "yAxis": ["AnnualPAYG"], "ySettings": { "min": 0, "numberFormatSettings": { "unit": 0, "options": { "style": "currency", "currency": "GBP" } } } }
+      },
+      "name": "coverage_chart"
+    },
+    {
+      "type": 1,
+      "content": { "json": "## Refund-buffer exposure tracker\n\nCumulative cancellation exposure of accepted recommendations, against the £5k cap to Mar 2027." },
+      "name": "section_buffer"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "RICoverage_CL\n| where TimeGenerated > ago(7d)\n| where shortlisted_b == true\n| order by annual_savings_gbp_d desc\n| extend cumulative_exposure = row_cumsum(cancellation_exposure_gbp_d)\n| project Family=family_s, Region=location_s, Product=recommended_product_s, AnnualCommit=annual_commit_gbp_d, AnnualSavings=annual_savings_gbp_d, CancelExposure=cancellation_exposure_gbp_d, CumExposure=cumulative_exposure, Risk=risk_s",
+        "size": 0,
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "table"
+      },
+      "name": "buffer_tracker"
+    },
+    {
+      "type": 1,
+      "content": { "json": "## Deprecated-family review\n\nGroups in older-gen families (Dv2, Dv3, Ev3, FSv2, A-Series). Migration roadmap should be confirmed before any 3Y RI on these." },
+      "name": "section_deprecated"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "RICoverage_CL\n| where TimeGenerated > ago(7d)\n| where deprecated_family_b == true\n| project Family=family_s, Region=location_s, AnnualPAYG=annual_payg_gbp_d, AnnualSavingsIf3Y=annual_savings_gbp_d, Risk=risk_s, Rationale=rationale_s\n| order by AnnualPAYG desc",
+        "size": 0,
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "table"
+      },
+      "name": "deprecated_table"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "---\n\n**How to read this workbook**\n\n- Recommendations are *bounded by the £5k cancellation-exposure buffer*; everything above the line is excluded until the buffer is raised.\n- Every commit must be cross-checked against `rightsizing-peak` for the same family×region — never reserve a workload that should be downsized first.\n- Savings rates are estimates (Compute SP 1Y ~17% / 3Y ~28%; VM RI 1Y ~30% / 3Y ~50%). Confirm per-SKU savings in the Azure portal before committing.\n\n_Source: `tools/ri-coverage/`. Maintained by the FinOps Engine maintainers._"
+      },
+      "name": "footer"
+    }
+  ],
+  "fallbackResourceIds": [],
+  "fromTemplateId": "finops-ri-coverage"
+}

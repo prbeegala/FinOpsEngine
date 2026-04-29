@@ -1,0 +1,24 @@
+{
+  "displayName": "Audit unattached managed disks",
+  "description": "Flags managed disks that have been unattached for any length of time. Promote to deny only after 30-day audit.",
+  "mode": "All",
+  "policyType": "Custom",
+  "policyRule": {
+    "if": {
+      "allOf": [
+        {
+          "field": "type",
+          "equals": "Microsoft.Compute/disks"
+        },
+        {
+          "field": "Microsoft.Compute/disks/diskState",
+          "equals": "Unattached"
+        }
+      ]
+    },
+    "then": {
+      "effect": "audit"
+    }
+  },
+  "parameters": {}
+}
