@@ -46,6 +46,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
+# HTML report sink (shared utility — no third-party deps)
+# ---------------------------------------------------------------------------
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from html_sink import write_html, write_index  # noqa: E402
+
+# ---------------------------------------------------------------------------
 # Tag conventions — case-insensitive lookup, first match wins.
 # ---------------------------------------------------------------------------
 
@@ -500,10 +506,15 @@ def run(hidden_waste_csv: Path | None,
 
     # Output.
     date = datetime.now(timezone.utc).strftime("%Y%m%d")
-    csv_path = out_dir / f"enriched-{date}.csv"
-    md_path  = out_dir / f"enriched-{date}.md"
+    csv_path  = out_dir / f"enriched-{date}.csv"
+    md_path   = out_dir / f"enriched-{date}.md"
+    html_path = out_dir / f"enriched-{date}.html"
     write_enriched_csv(csv_path, findings)
     write_summary_md(md_path, findings)
+    write_html(md_path, html_path)
+    write_index(out_dir, [
+        ("Context-enriched Findings — FinOps Engine", html_path.name),
+    ])
 
     # Per-owner issue bundles for HIGH+MED.
     by_owner: dict[str, list[Finding]] = defaultdict(list)
@@ -517,6 +528,7 @@ def run(hidden_waste_csv: Path | None,
     print(f"[enricher] Done.")
     print(f"  - {csv_path}")
     print(f"  - {md_path}")
+    print(f"  - {html_path}")
     print(f"  - {issues_dir}/  ({len(by_owner)} per-owner issue templates)")
     high = sum(1 for f in findings if f.confidence == "HIGH")
     med  = sum(1 for f in findings if f.confidence == "MED")

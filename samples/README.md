@@ -6,10 +6,14 @@ of each engine's output. None of the resource IDs, subscription names, or
 
 | Engine             | Sample files                                                |
 |--------------------|-------------------------------------------------------------|
-| `rightsizing-peak` | `peak-rightsizing/peak-rightsizing-combined-20260101.md`<br>`peak-rightsizing/contoso-app-prod-peak-rightsizing-20260101.csv` |
-| `hidden-waste`     | `hidden-waste/hidden-waste-20260101.md`<br>`hidden-waste/hidden-waste-20260101.csv` |
-| `ri-coverage`      | `ri-coverage/ri-coverage-20260101.md`<br>`ri-coverage/ri-shortlist-20260101.md` |
-| `context-enricher` | `enriched/enriched-20260101.md`<br>`enriched/contoso-app-team-20260101.md` |
+| `rightsizing-peak` | `peak-rightsizing/peak-rightsizing-combined-20260101.md`<br>`peak-rightsizing/peak-rightsizing-combined-20260101.html`<br>`peak-rightsizing/contoso-app-prod-peak-rightsizing-20260101.csv` |
+| `hidden-waste`     | `hidden-waste/hidden-waste-20260101.md`<br>`hidden-waste/hidden-waste-20260101.html`<br>`hidden-waste/hidden-waste-20260101.csv` |
+| `ri-coverage`      | `ri-coverage/ri-coverage-20260101.md`<br>`ri-coverage/ri-coverage-20260101.html`<br>`ri-coverage/ri-shortlist-20260101.md`<br>`ri-coverage/ri-shortlist-20260101.html` |
+| `context-enricher` | `enriched/enriched-20260101.md`<br>`enriched/enriched-20260101.html`<br>`enriched/contoso-app-team-20260101.md`<br>`enriched/contoso-app-team-20260101.html` |
+
+Each engine also writes an `index.html` in its output directory that links
+to all HTML reports for that run.  Open `samples/index.html` for a combined
+view of the sample HTML outputs.
 
 Run any engine against your own tenant to produce equivalents with real
 data — the format is identical.

@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RI / Savings-Plan Coverage Map</title>
+<style>
+* { box-sizing: border-box; }
+body {
+    font-family: Calibri, 'Segoe UI', Arial, sans-serif;
+    font-size: 14px;
+    line-height: 1.6;
+    color: #101828;
+    background: #ffffff;
+    margin: 0;
+    padding: 0;
+}
+.container {
+    max-width: 960px;
+    margin: 32px auto;
+    padding: 0 28px;
+}
+h1 {
+    font-size: 22px;
+    color: #0f172a;
+    border-bottom: 2px solid #0284c7;
+    padding-bottom: 6px;
+    margin-top: 32px;
+    margin-bottom: 12px;
+}
+h2 {
+    font-size: 17px;
+    color: #0f172a;
+    border-bottom: 1px solid #e2e8f0;
+    padding-bottom: 4px;
+    margin-top: 28px;
+    margin-bottom: 10px;
+}
+h3 {
+    font-size: 14px;
+    color: #1e293b;
+    margin-top: 20px;
+    margin-bottom: 8px;
+}
+p { margin: 8px 0; }
+a { color: #0284c7; text-decoration: none; }
+a:hover { text-decoration: underline; }
+code {
+    font-family: Consolas, 'Courier New', monospace;
+    font-size: 12px;
+    background: #f1f5f9;
+    padding: 1px 5px;
+    border-radius: 3px;
+}
+pre {
+    background: #f1f5f9;
+    padding: 12px 16px;
+    border-radius: 4px;
+    overflow-x: auto;
+    font-size: 12px;
+}
+pre code { background: none; padding: 0; }
+table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 14px 0;
+    font-size: 13px;
+}
+thead tr { background: #0284c7; }
+th {
+    color: #ffffff;
+    padding: 8px 10px;
+    text-align: left;
+    font-weight: 600;
+    white-space: nowrap;
+}
+td {
+    padding: 6px 10px;
+    border-bottom: 1px solid #e2e8f0;
+    vertical-align: top;
+}
+tr:nth-child(even) td { background: #f8fafc; }
+blockquote {
+    margin: 12px 0;
+    padding: 10px 16px;
+    background: #fffbeb;
+    border-left: 4px solid #f59e0b;
+    color: #78350f;
+}
+blockquote p { margin: 4px 0; }
+ul { margin: 8px 0; padding-left: 24px; }
+li { margin: 3px 0; }
+hr { border: none; border-top: 1px solid #e2e8f0; margin: 20px 0; }
+strong { font-weight: 600; }
+em { font-style: italic; }
+.footer {
+    margin-top: 40px;
+    padding-top: 10px;
+    border-top: 1px solid #e2e8f0;
+    font-size: 11px;
+    color: #94a3b8;
+}
+.index-list { list-style: none; padding: 0; }
+.index-list li {
+    padding: 10px 14px;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    margin-bottom: 8px;
+}
+.index-list li a { font-size: 15px; font-weight: 600; }
+</style>
+</head>
+<body>
+<div class="container">
+<h1>RI / Savings-Plan Coverage Map</h1>
+<p><strong>Generated</strong>: 2026-01-01 06:34 UTC <strong>Window</strong>: last 3 months PAYG <strong>Subscriptions in scope</strong>: 20</p>
+<blockquote><p>⚠️  <strong>Synthetic data — illustration only.</strong></p></blockquote>
+<h2>Headline</h2>
+<ul>
+<li>Annualised PAYG VM spend in scope: <strong>£6,330,735</strong></li>
+<li>Family × region commitable groups: <strong>69</strong></li>
+<li>Theoretical max annual savings (best-case product per group): <strong>£1,519,376</strong></li>
+<li>LOW-risk (stable, current-gen) groups: <strong>57</strong></li>
+<li>HIGH-risk (deprecated families) groups: <strong>12</strong></li>
+</ul>
+<h2>Risk distribution</h2>
+<table>
+<thead>
+<tr>
+<th>Risk band</th>
+<th style="text-align:right">Groups</th>
+<th style="text-align:right">Annual £ in band</th>
+<th>Recommendation summary</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>LOW</td>
+<td style="text-align:right">57</td>
+<td style="text-align:right">£5,481,222</td>
+<td>RI 1Y where CV &lt; 15%; Compute SP 1Y otherwise</td>
+</tr>
+<tr>
+<td>MED</td>
+<td style="text-align:right">8</td>
+<td style="text-align:right">£742,108</td>
+<td>Compute SP 1Y at 65% commit</td>
+</tr>
+<tr>
+<td>HIGH</td>
+<td style="text-align:right">12</td>
+<td style="text-align:right">£107,405</td>
+<td>Hold — deprecated family or sub-£5k annual burn</td>
+</tr>
+</tbody>
+</table>
+<h2>Top 20 commitable groups (by annual PAYG £)</h2>
+<table>
+<thead>
+<tr>
+<th style="text-align:right">#</th>
+<th>Family</th>
+<th>Region</th>
+<th style="text-align:right">Annual PAYG £</th>
+<th style="text-align:right">CV (%)</th>
+<th>Risk</th>
+<th>Recommended product</th>
+<th style="text-align:right">Annual savings</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align:right">1</td>
+<td>Dsv5</td>
+<td>uksouth</td>
+<td style="text-align:right">£1,189,400</td>
+<td style="text-align:right">8.2</td>
+<td>LOW</td>
+<td>RI 1Y (80% commit)</td>
+<td style="text-align:right">£356,820</td>
+</tr>
+<tr>
+<td style="text-align:right">2</td>
+<td>Esv5</td>
+<td>uksouth</td>
+<td style="text-align:right">£742,300</td>
+<td style="text-align:right">12.4</td>
+<td>LOW</td>
+<td>RI 1Y (80% commit)</td>
+<td style="text-align:right">£222,690</td>
+</tr>
+<tr>
+<td style="text-align:right">3</td>
+<td>Dsv5</td>
+<td>northeurope</td>
+<td style="text-align:right">£611,800</td>
+<td style="text-align:right">18.1</td>
+<td>LOW</td>
+<td>Compute SP 1Y (65%)</td>
+<td style="text-align:right">£67,503</td>
+</tr>
+<tr>
+<td style="text-align:right">4</td>
+<td>Esv5</td>
+<td>northeurope</td>
+<td style="text-align:right">£384,200</td>
+<td style="text-align:right">22.7</td>
+<td>MED</td>
+<td>Compute SP 1Y (65%)</td>
+<td style="text-align:right">£42,392</td>
+</tr>
+<tr>
+<td style="text-align:right">5</td>
+<td>Bs</td>
+<td>uksouth</td>
+<td style="text-align:right">£208,400</td>
+<td style="text-align:right">6.4</td>
+<td>LOW</td>
+<td>RI 1Y (80% commit)</td>
+<td style="text-align:right">£49,995</td>
+</tr>
+<tr>
+<td style="text-align:right">6</td>
+<td>Fsv2</td>
+<td>westeurope</td>
+<td style="text-align:right">£142,100</td>
+<td style="text-align:right">31.2</td>
+<td>MED</td>
+<td>Compute SP 1Y (30%)</td>
+<td style="text-align:right">£7,247</td>
+</tr>
+<tr>
+<td style="text-align:right">7</td>
+<td>Lsv3</td>
+<td>uksouth</td>
+<td style="text-align:right">£121,800</td>
+<td style="text-align:right">15.0</td>
+<td>LOW</td>
+<td>Compute SP 1Y (65%)</td>
+<td style="text-align:right">£13,449</td>
+</tr>
+<tr>
+<td style="text-align:right">8</td>
+<td>Dsv4</td>
+<td>uksouth</td>
+<td style="text-align:right">£98,600</td>
+<td style="text-align:right">9.1</td>
+<td>HIGH</td>
+<td>(deprecated family)</td>
+<td style="text-align:right">£0</td>
+</tr>
+<tr>
+<td style="text-align:right">...</td>
+<td>...</td>
+<td>...</td>
+<td style="text-align:right">...</td>
+<td style="text-align:right">...</td>
+<td>...</td>
+<td>...</td>
+<td style="text-align:right">...</td>
+</tr>
+</tbody>
+</table>
+<h2>How to read this</h2>
+<p>The total <em>theoretical</em> savings (~£1.5M) is what you would unlock if the cancellation-exposure buffer were unbounded. Use <strong><code>ri-shortlist-20260101.md</code></strong> to see the subset that actually fits inside the configured buffer.</p>
+<p>The biggest single opportunity (Dsv5 / uksouth, £356k savings) exposes ~£142k of cancellation risk — well above any reasonable starting buffer. The right next conversation is with procurement: <strong>the binding constraint is the buffer, not the data.</strong></p>
+<p><em>Generated by <code>ri-coverage</code>.</em></p>
+</div>
+</body>
+</html>
