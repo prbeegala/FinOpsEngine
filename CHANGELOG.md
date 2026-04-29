@@ -8,7 +8,16 @@ as detailed in [`VERSIONING.md`](./VERSIONING.md).
 
 ## [Unreleased]
 
-_Nothing yet._
+### Added
+
+- New FAQ entry — **"Where do the £ figures come from?"** — clarifying
+  that headline numbers are sourced from Cost Management `ActualCost`
+  (your real bill, post-discount), not retail list price. Per-engine
+  breakdown shows where list price is used as a fallback (never-attached
+  disks in `hidden-waste`) and how `ri-coverage` applies public RI / SP
+  discount %s on top of actual PAYG run-rate.
+- Top-level README "Currency" section renamed to "Currency and pricing
+  source" with a short summary that links to the FAQ entry.
 
 ## [0.1.2] - 2026-04-29
 

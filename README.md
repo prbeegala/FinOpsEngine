@@ -295,7 +295,7 @@ For the *why* behind the engines (rather than the *how*), see:
 
 ---
 
-## Currency
+## Currency and pricing source
 
 All `£` symbols in the code and reports are **labels only** — the underlying
 numbers come from your Azure billing currency. If your tenant bills in USD /
@@ -304,6 +304,14 @@ EUR / etc., the values are still your billed numbers; they are merely
 four engine source files (the engines treat it as a constant string).
 
 A future release will read `az billing account list` to autodetect.
+
+**Where the £ figures come from.** Mostly your **actual bill** via Cost
+Management `ActualCost`, not public retail price. EA / MCA discounts,
+regional pricing, Hybrid Benefit, and dev/test rates are all baked in.
+Public list price is only used as a thin fallback for never-attached disks
+(which never produce a billing record) and is explicitly tagged `estimate`
+in the output. See the [FAQ entry on pricing source](docs/faq.md#where-do-the--figures-come-from--public-list-price-or-my-actual-bill)
+for the per-engine breakdown.
 
 ## Extending
 
