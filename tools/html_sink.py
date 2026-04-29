@@ -261,6 +261,20 @@ def _render_table(rows: list[str]) -> str:
 # Block-level Markdown → HTML
 # ---------------------------------------------------------------------------
 
+def _is_table_start(line: str, idx: int, lines: list[str]) -> bool:
+    """Return True when *line* is the header row of a GFM table.
+
+    A GFM table header row contains ``|`` and is immediately followed by a
+    separator row (e.g. ``|---|---:|``).
+    """
+    return (
+        '|' in line
+        and not _is_separator_row(line)
+        and idx + 1 < len(lines)
+        and _is_separator_row(lines[idx + 1])
+    )
+
+
 def _render_blocks(lines: list[str]) -> str:
     """Convert a list of Markdown lines to an HTML fragment string."""
     out: list[str] = []
@@ -294,15 +308,14 @@ def _render_blocks(lines: list[str]) -> str:
             out.append(f'<blockquote>{inner}</blockquote>')
             continue
 
-        # --- GFM table (line containing | followed by separator row) ---
-        if '|' in line and not _is_separator_row(line):
-            if i + 1 < n and _is_separator_row(lines[i + 1]):
-                tbl: list[str] = []
-                while i < n and '|' in lines[i]:
-                    tbl.append(lines[i])
-                    i += 1
-                out.append(_render_table(tbl))
-                continue
+        # --- GFM table (header row followed by separator row) ---
+        if _is_table_start(line, i, lines):
+            tbl: list[str] = []
+            while i < n and '|' in lines[i]:
+                tbl.append(lines[i])
+                i += 1
+            out.append(_render_table(tbl))
+            continue
 
         # --- Unordered list (lines starting with - or * + space) ---
         if re.match(r'^[*\-]\s', line):
@@ -335,7 +348,7 @@ def _render_blocks(lines: list[str]) -> str:
                 break
             if ln.startswith('>'):
                 break
-            if '|' in ln and not _is_separator_row(ln) and i + 1 < n and _is_separator_row(lines[i + 1]):
+            if _is_table_start(ln, i, lines):
                 break
             if re.match(r'^[*\-]\s', ln):
                 break
@@ -407,7 +420,7 @@ def write_index(out_dir: Path,
         Ordered list of ``(title, html_filename)`` pairs.
     """
     items = "\n".join(
-        f'  <li class="index-list"><a href="{html.escape(fn)}">'
+        f'  <li><a href="{html.escape(fn)}">'
         f'{html.escape(t)}</a></li>'
         for t, fn in reports
     )
