@@ -320,6 +320,18 @@ multi-cloud work lives in [`ROADMAP.md`](./ROADMAP.md). Items are grouped by
 theme and badged with rough size and risk. Open an Issue if you'd like
 something bumped or want to pick one up.
 
+## Versioning & changelog
+
+This project follows [Semantic Versioning](https://semver.org/) applied to
+four explicit public contracts (CLI flags, output file shape, Workbook /
+Policy IDs, Issue body shape). The full policy — including the deprecation
+cycle, branch model, and `v1.0.0` shipping criteria — is in
+[`VERSIONING.md`](./VERSIONING.md). The release-by-release history is in
+[`CHANGELOG.md`](./CHANGELOG.md).
+
+If you are pinning the engine in CI or a downstream Workbook, read
+[`VERSIONING.md`](./VERSIONING.md#pinning-guidance-for-consumers) first.
+
 ## Contributing
 
 Issues and PRs welcome. The engines deliberately avoid third-party Python
