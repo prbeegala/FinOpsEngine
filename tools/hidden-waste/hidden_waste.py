@@ -52,6 +52,12 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
+# HTML report sink (shared utility — no third-party deps)
+# ---------------------------------------------------------------------------
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from html_sink import write_html, write_index  # noqa: E402
+
+# ---------------------------------------------------------------------------
 # Subprocess helpers
 # ---------------------------------------------------------------------------
 
@@ -720,8 +726,11 @@ def run(subs: list[str], out_dir: Path):
     # Output
     md_path = out_dir / f"hidden-waste-{date}.md"
     csv_path = out_dir / f"hidden-waste-{date}.csv"
+    html_path = out_dir / f"hidden-waste-{date}.html"
     write_csv(csv_path, raw_findings)
     write_md(md_path, raw_findings, len(subs))
+    write_html(md_path, html_path)
+    write_index(out_dir, [("Hidden Waste & Lifecycle", html_path.name)])
 
     # Top-3 waste classes by £ → policy starter pack.
     cat_costs = sorted(
@@ -736,6 +745,7 @@ def run(subs: list[str], out_dir: Path):
     total_monthly = sum(f.monthly_gbp for f in raw_findings)
     print(f"[engine] Done.")
     print(f"  - {md_path}")
+    print(f"  - {html_path}")
     print(f"  - {csv_path}")
     print(f"  - {tool_dir / 'policy'}/  (audit-mode policies for all "
           f"7 classes)")

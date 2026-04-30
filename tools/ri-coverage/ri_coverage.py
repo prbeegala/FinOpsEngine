@@ -50,6 +50,12 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
+# HTML report sink (shared utility — no third-party deps)
+# ---------------------------------------------------------------------------
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from html_sink import write_html, write_index  # noqa: E402
+
+# ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
 
@@ -545,18 +551,28 @@ def run(subs, months, refund_buffer, out_dir: Path):
     print(f"[engine] Shortlist within £{refund_buffer:.0f} buffer: "
           f"{len(shortlist)} recommendation(s).")
 
-    coverage_csv = out_dir / f"ri-coverage-{date}.csv"
-    coverage_md  = out_dir / f"ri-coverage-{date}.md"
-    shortlist_md = out_dir / f"ri-shortlist-{date}.md"
+    coverage_csv  = out_dir / f"ri-coverage-{date}.csv"
+    coverage_md   = out_dir / f"ri-coverage-{date}.md"
+    coverage_html = out_dir / f"ri-coverage-{date}.html"
+    shortlist_md  = out_dir / f"ri-shortlist-{date}.md"
+    shortlist_html = out_dir / f"ri-shortlist-{date}.html"
     write_coverage_csv(coverage_csv, recs)
     write_coverage_md(coverage_md, recs, months, len(subs))
+    write_html(coverage_md, coverage_html)
     write_shortlist_md(shortlist_md, shortlist, recs, refund_buffer)
+    write_html(shortlist_md, shortlist_html)
+    write_index(out_dir, [
+        ("RI / Savings-Plan Coverage Map", coverage_html.name),
+        ("RI / Savings-Plan Risk-Scored Shortlist", shortlist_html.name),
+    ])
 
     total_savings = sum(r.annual_savings for r in shortlist)
     print(f"[engine] Done.")
     print(f"  - {coverage_md}")
+    print(f"  - {coverage_html}")
     print(f"  - {coverage_csv}")
     print(f"  - {shortlist_md}")
+    print(f"  - {shortlist_html}")
     print(f"[engine] Modelled annual savings on shortlist: "
           f"£{total_savings:,.0f}")
 
