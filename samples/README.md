@@ -14,6 +14,15 @@ of each engine's output. None of the resource IDs, subscription names, or
 Each engine also writes an `index.html` in its output directory that links
 to all HTML reports for that run.  Open `samples/index.html` for a combined
 view of the sample HTML outputs.
+| `rightsizing-peak` | `peak-rightsizing/peak-rightsizing-combined-20260101.md`<br>`peak-rightsizing/contoso-app-prod-peak-rightsizing-20260101.csv` |
+| `hidden-waste`     | `hidden-waste/hidden-waste-20260101.md`<br>`hidden-waste/hidden-waste-20260101.csv` |
+| `ri-coverage`      | `ri-coverage/ri-coverage-20260101.md`<br>`ri-coverage/ri-coverage-20260101.csv`<br>`ri-coverage/ri-shortlist-20260101.md` |
+| `context-enricher` | `enriched/enriched-20260101.md`<br>`enriched/enriched-20260101.csv`<br>`enriched/contoso-app-team-20260101.md` |
+
+Every engine emits both a Markdown report (for humans) and a CSV (for
+sheet pivots / Workbook ingestion / downstream automation). The CSVs
+above are the machine-readable equivalents of the MD reports next to
+them.
 
 Run any engine against your own tenant to produce equivalents with real
 data — the format is identical.

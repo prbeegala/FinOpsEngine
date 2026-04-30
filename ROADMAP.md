@@ -117,7 +117,10 @@ These three plus the already-listed
 These should land before the engine is rolled out widely.
 
 - 🛡 🟢 **Unit tests against fixture CSV/JSON** — pure-stdlib deterministic
-  outputs are easy to test. Land `pytest` fixtures per engine.
+  outputs are easy to test. Land `pytest` fixtures per engine. *(Partially
+  shipped — `rightsizing-peak` and `context-enricher` covered in v0.1.3.
+  Tracking `hidden-waste` and `ri-coverage` separately — both need an
+  `az_rest` mock.)*
 - 🛡 🟢 **CI on PRs** — `python -m py_compile` plus the test suite once it
   exists.
 - 🛡 🟡 **Output-schema versioning** — version the CSV/MD output formats so
@@ -183,6 +186,14 @@ fit) translate; the data sources don't.
 
 ## Recently shipped
 
+- `v0.1.3` — fixture-driven test infrastructure (`tests/`, pyproject.toml
+  pytest config, conftest CSV diff helper). `analyse_vm` decision-tree
+  parametrised across 5 verdicts; `context-enricher` end-to-end snapshot
+  test with mocked tag lookup. Pattern: drop a `.json` + `.expected.csv`
+  to add coverage — see [`tests/README.md`](./tests/README.md).
+- `v0.1.2` — tenant-wide `--all-subs` mode across all three
+  subscription-scoped engines, plus `--exclude-subs` and FAQ entry on
+  pricing source (Cost Management actuals vs list price).
 - `v0.1.0` — initial public release: four engines, nightly automation
   workflow, Azure Monitor workbooks, starter Azure Policy pack, full
   docs, synthetic samples.

@@ -1,0 +1,14 @@
+{
+  "_doc": "Canned tag responses for the 3 resource IDs in input/hidden-waste.csv. The test monkey-patches fetch_tags_for_ids to return this map. Keys must be lowercased to match the engine's lookup.",
+  "/subscriptions/11111111-1111-1111-1111-111111111111/resourcegroups/rg-app-data/providers/microsoft.compute/disks/disk-orphan-001": {
+    "owner": "platform-storage",
+    "criticality": "tier-2",
+    "environment": "prod",
+    "cost centre": "CC-1234",
+    "application": "data-platform"
+  },
+  "/subscriptions/11111111-1111-1111-1111-111111111111/resourcegroups/rg-web/providers/microsoft.web/serverfarms/asp-empty-eu": {
+    "owner": "web-team",
+    "application": "marketing-portal"
+  }
+}

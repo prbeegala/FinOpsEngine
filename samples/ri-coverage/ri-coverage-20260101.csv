@@ -1,0 +1,16 @@
+family,location,sub_count,avg_monthly_payg_gbp,annual_payg_gbp,cv,stability,deprecated_family,recommended_product,commit_fraction,annual_commit_gbp,annual_savings_gbp,cancellation_exposure_gbp,risk,rationale
+Dsv5,uksouth,9,99116.67,1189400.00,0.082,STABLE,FALSE,RI 1Y,0.80,951520.00,356820.00,142728.00,LOW,CV 8.2% << 15% — confidently RI-able; commit at 80% leaves 20% on PAYG for safety
+Esv5,uksouth,7,61858.33,742300.00,0.124,STABLE,FALSE,RI 1Y,0.80,593840.00,222690.00,89076.00,LOW,Memory family with steady CV — RI 1Y at 80% commit
+Dsv5,northeurope,6,50983.33,611800.00,0.181,STABLE,FALSE,Compute SP 1Y,0.65,397670.00,67503.00,38486.00,LOW,CV above 15% — Compute SP for cross-family flexibility
+Esv5,northeurope,5,32016.67,384200.00,0.227,VARIABLE,FALSE,Compute SP 1Y,0.65,249730.00,42392.00,28968.00,MEDIUM,Variable workload — SP at 65% balances saving vs exposure
+Bs,uksouth,12,17366.67,208400.00,0.064,STABLE,FALSE,RI 1Y,0.80,166720.00,49995.00,20006.00,LOW,Burstable family with very low CV — RI-able
+Fsv2,westeurope,3,11841.67,142100.00,0.312,VARIABLE,FALSE,Compute SP 1Y,0.30,42630.00,7247.00,5116.00,MEDIUM,High CV — small SP commit only
+Lsv3,uksouth,2,10150.00,121800.00,0.150,STABLE,FALSE,Compute SP 1Y,0.65,79170.00,13449.00,9500.00,LOW,Storage-optimised steady workload — SP for family flexibility
+Dsv4,uksouth,4,8216.67,98600.00,0.091,STABLE,TRUE,(deprecated family),0.00,0.00,0.00,0.00,HIGH,Deprecated family — recommend migration to Dasv5 before committing
+Eav4,northeurope,3,7400.00,88800.00,0.115,STABLE,TRUE,(deprecated family),0.00,0.00,0.00,0.00,HIGH,Deprecated AMD-v4 family — migrate before commit
+Dasv5,westeurope,4,6225.00,74700.00,0.142,STABLE,FALSE,RI 1Y,0.80,59760.00,22410.00,8964.00,LOW,Current-gen AMD family — RI-able at 80%
+NCasT4_v3,uksouth,2,5808.33,69700.00,0.402,VARIABLE,FALSE,Compute SP 1Y,0.30,20910.00,3554.00,2510.00,MEDIUM,GPU workload with bursty CV — small SP commit only
+Mv2,uksouth,1,4683.33,56200.00,0.071,STABLE,FALSE,RI 3Y,0.80,44960.00,22480.00,5395.00,LOW,Memory-optimised SAP — long-lived; 3Y RI for deeper discount
+Easv5,uksouth,2,4133.33,49600.00,0.165,STABLE,FALSE,Compute SP 1Y,0.65,32240.00,5482.00,3869.00,LOW,Steady AMD memory workload — SP for swap room
+Av2,uksouth,3,2900.00,34800.00,0.221,VARIABLE,TRUE,(deprecated family),0.00,0.00,0.00,0.00,HIGH,Deprecated A-series — migrate to B/D before committing
+Dsv3,northeurope,2,2250.00,27000.00,0.105,STABLE,TRUE,(deprecated family),0.00,0.00,0.00,0.00,HIGH,Deprecated v3 family — migrate to v5 before committing
