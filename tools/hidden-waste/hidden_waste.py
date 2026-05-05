@@ -647,7 +647,7 @@ def refine_paas_findings(raw: list["Finding"],
             if req_total is None or replicas_avg is None:
                 metric_failures += 1
                 continue  # drop — see docstring
-            warm = replicas_avg >= (min_replicas - 0.1)
+            warm = abs(replicas_avg - min_replicas) <= 0.1
             quiet = req_total <= ca_requests_max
             if warm and quiet:
                 f.extra = (f"{int(req_total):,} requests / {ca_days}d, "
