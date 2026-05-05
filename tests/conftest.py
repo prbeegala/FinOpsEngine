@@ -48,6 +48,14 @@ def context_enricher() -> ModuleType:
 
 
 @pytest.fixture(scope="session")
+def hidden_waste() -> ModuleType:
+    return _load_engine(
+        "hidden_waste",
+        TOOLS / "hidden-waste" / "hidden_waste.py",
+    )
+
+
+@pytest.fixture(scope="session")
 def fixtures_dir() -> Path:
     return FIXTURES
 

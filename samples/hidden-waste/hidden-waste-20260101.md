@@ -9,34 +9,39 @@
 
 ## Headline
 
-- Total flagged resources: **1,135**
-- Estimated monthly £ recoverable (deletion or rightsizing): **£9,744**
-- Annualised: **£116,923**
+- Total flagged resources: **1,190**
+- Estimated monthly £ recoverable (deletion or rightsizing): **£12,774**
+- Annualised: **£153,288**
 
 ## By category
 
-| Category                       | Count | Monthly £ | Annualised £ |
-|--------------------------------|------:|----------:|-------------:|
-| Unattached managed disks       |   592 |    £4,845 |      £58,143 |
-| Old snapshots (>90d)           |    54 |    £3,053 |      £36,635 |
-| Empty App Service Plans        |    20 |    £1,717 |      £20,607 |
-| Unused public IPs              |    46 |       £91 |       £1,098 |
-| Idle Standard load balancers   |     2 |       £30 |         £360 |
-| Stopped-not-deallocated VMs    |     1 |     £6.67 |          £80 |
-| Orphan NICs                    |   420 |     £0.00 |        £0.00 |
+| Category                                  | Count | Monthly £ | Annualised £ |
+|-------------------------------------------|------:|----------:|-------------:|
+| Unattached managed disks                  |   592 |    £4,845 |      £58,143 |
+| Old snapshots (>90d)                      |    54 |    £3,053 |      £36,635 |
+| Hot-tier storage accounts (cold workload) |    11 |    £2,210 |      £26,520 |
+| Empty App Service Plans                   |    20 |    £1,717 |      £20,607 |
+| Oversized premium file shares             |     6 |      £820 |       £9,840 |
+| Unused public IPs                         |    46 |       £91 |       £1,098 |
+| Idle Standard load balancers              |     2 |       £30 |         £360 |
+| Stopped-not-deallocated VMs               |     1 |     £6.67 |          £80 |
+| Orphan NICs                               |   420 |     £0.00 |        £0.00 |
+| Untouched blob containers (>90d)          |    38 |     £0.00 |        £0.00 |
 
 ## Top 25 individual offenders
 
-| Sub                  | RG                       | Resource                          | Category                  | Monthly £ | Source       |
-|----------------------|--------------------------|-----------------------------------|---------------------------|----------:|--------------|
-| ContosoMigration.Prod| rg-asr-replicas          | disk-asr-seed-uks-01              | Unattached managed disks  |    £2,752 | cost_mgmt    |
-| ContosoApp.Prod      | rg-snap-archive-2024     | snap-bkp-2024-q4-chain            | Old snapshots (>90d)      |      £318 | cost_mgmt    |
-| ContosoApp.Prod      | rg-snap-archive-2024     | snap-bkp-2024-q3-chain            | Old snapshots (>90d)      |      £312 | cost_mgmt    |
-| ContosoBatch.Prod    | rg-legacy-portal         | asp-legacy-portal-001             | Empty App Service Plans   |      £180 | cost_mgmt    |
-| ContosoData.Prod     | rg-archive-disks         | disk-old-sql-data-04              | Unattached managed disks  |      £176 | cost_mgmt    |
-| ContosoApp.Prod      | rg-legacy-portal         | asp-legacy-api-002                | Empty App Service Plans   |      £172 | cost_mgmt    |
-| ContosoBatch.Prod    | rg-snap-archive-2024     | snap-bkp-2024-q2-chain            | Old snapshots (>90d)      |      £168 | cost_mgmt    |
-| ...                  | ...                      | ...                               | ...                       |       ... | ...          |
+| Sub                  | RG                       | Resource                          | Category                                  | Monthly £ | Source       |
+|----------------------|--------------------------|-----------------------------------|-------------------------------------------|----------:|--------------|
+| ContosoMigration.Prod| rg-asr-replicas          | disk-asr-seed-uks-01              | Unattached managed disks                  |    £2,752 | cost_mgmt    |
+| ContosoData.Prod     | rg-archive-blob          | stcontosoarchive01                | Hot-tier storage accounts (cold workload) |      £820 | cost_mgmt    |
+| ContosoApp.Prod      | rg-snap-archive-2024     | snap-bkp-2024-q4-chain            | Old snapshots (>90d)                      |      £318 | cost_mgmt    |
+| ContosoApp.Prod      | rg-snap-archive-2024     | snap-bkp-2024-q3-chain            | Old snapshots (>90d)                      |      £312 | cost_mgmt    |
+| ContosoData.Prod     | rg-files-prod-uks        | stcontosofiles01/default/share-archive-old | Oversized premium file shares    |      £288 | estimate     |
+| ContosoBatch.Prod    | rg-legacy-portal         | asp-legacy-portal-001             | Empty App Service Plans                   |      £180 | cost_mgmt    |
+| ContosoData.Prod     | rg-archive-disks         | disk-old-sql-data-04              | Unattached managed disks                  |      £176 | cost_mgmt    |
+| ContosoApp.Prod      | rg-legacy-portal         | asp-legacy-api-002                | Empty App Service Plans                   |      £172 | cost_mgmt    |
+| ContosoBatch.Prod    | rg-snap-archive-2024     | snap-bkp-2024-q2-chain            | Old snapshots (>90d)                      |      £168 | cost_mgmt    |
+| ...                  | ...                      | ...                               | ...                                       |       ... | ...          |
 
 ## Recommended Azure Policy guardrails (top 3 by £)
 
@@ -47,14 +52,22 @@ The audit-mode policy JSON is in `policy/`. Promote to `deny` only after a
 2. `old_snapshots.audit.json` — flag any new snapshot creation (apply with
    the workbook KQL filter on `properties.timeCreated > 90d`; Policy alone
    cannot filter on `timeCreated`).
-3. `empty_asp.audit.json` — flag App Service Plans with `numberOfSites == 0`.
+3. `storage_cold_tier.audit.json` — flag GPv2 / blob storage accounts in
+   the `Hot` access tier; pair with the engine's metric refinement
+   (Transactions / UsedCapacity) to drop genuinely active workloads.
 
 ## Method notes
 
 - Resource Graph for enumeration; Cost Management `/query` for actual £ over
-  the last 30 days.
+  the last 30 days. Storage detectors run an additional best-effort Azure
+  Monitor pass (`Transactions`, `UsedCapacity`, `FileCapacity`) to filter
+  the Hot-tier and oversized-share candidates down to the genuine waste.
 - `cost_mgmt` source = actual £ from Cost Management.
-- `list_price` source = published rate fallback for resources too new or
-  too cheap to be aggregated by Cost Management yet.
+- `estimate` source = published-rate or quota-based fallback when Cost
+  Management has no row for the resource (e.g. never-attached disks,
+  premium files line items split across an account).
+- `unknown` source = no £ attribution available; verify manually. Used for
+  hygiene-only findings (orphan NICs, untouched containers) and for
+  Hot-tier accounts where Cost Management has no row to anchor to.
 
 _Generated by `hidden-waste`._

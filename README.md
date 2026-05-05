@@ -26,7 +26,7 @@ practitioner would do by hand:
 | Engine | Replaces / improves on | Headline output |
 |---|---|---|
 | **`rightsizing-peak`** | Azure Advisor's *average*-based VM rightsizing | A list of Advisor recommendations that would have been **unsafe** under P95/P99 peak data |
-| **`hidden-waste`** | Manual orphan / lifecycle hunts in Cost Management | Seven categories of waste, **priced** against actual £, plus a starter Azure Policy pack |
+| **`hidden-waste`** | Manual orphan / lifecycle hunts in Cost Management | Ten categories of waste, **priced** against actual £, plus a starter Azure Policy pack |
 | **`ri-coverage`** | Portal *Reservations → Recommendations* (single-SKU view) | A risk-scored shortlist that fits inside **your cancellation-exposure buffer** |
 | **`context-enricher`** | Spreadsheet round-trips between FinOps and domain teams | Per-owner GitHub Issue bodies — auto-routed via `CODEOWNERS` |
 
@@ -223,11 +223,14 @@ manual-validation overhead this engine eliminates.
 |--------------------------------|------:|----------:|-------------:|
 | Unattached managed disks       |   592 |    £4,845 |      £58,143 |
 | Old snapshots (>90d)           |    54 |    £3,053 |      £36,635 |
+| Hot-tier storage accounts (cold workload) | 11 | £2,210 |      £26,520 |
 | Empty App Service Plans        |    20 |    £1,717 |      £20,607 |
+| Oversized premium file shares  |     6 |      £820 |       £9,840 |
 | Unused public IPs              |    46 |       £91 |       £1,098 |
 | Idle Standard load balancers   |     2 |       £30 |         £360 |
 | Stopped-not-deallocated VMs    |     1 |     £6.67 |          £80 |
 | Orphan NICs                    |   420 |     £0.00 |        £0.00 |
+| Untouched blob containers (>90d) | 38 |     £0.00 |        £0.00 |
 ```
 
 ### 3. RI / SP shortlist ([full file](samples/ri-coverage/ri-shortlist-20260101.md))

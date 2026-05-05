@@ -32,9 +32,9 @@ in a heavyweight SDK will be asked to justify the dependency.
 These are resource types or waste patterns the current engines don't see.
 Most are direct extensions of `hidden-waste` or `rightsizing-peak`.
 
-- 🟢 **Storage account waste** — cold blobs sitting in Hot tier, untouched
-  containers, oversized premium files. Often the #2 line item after
-  compute.
+- 🟢 ~~**Storage account waste**~~ — *delivered in [#1](https://github.com/prbeegala/FinOpsEngine/issues/1).* Cold blobs sitting
+  in Hot tier, untouched containers, oversized premium files. Often the
+  #2 line item after compute.
 - 🟡 **Log Analytics + App Insights waste** — over-retained tables,
   expensive custom-log ingestion (£2/GB), Sentinel double-charging.
   Routinely 10–25% of an Azure bill, completely invisible to Advisor.

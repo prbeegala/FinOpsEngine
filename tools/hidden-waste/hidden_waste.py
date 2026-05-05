@@ -5,7 +5,7 @@ Part of the FinOps Engine — orphan/lifecycle waste detection.
 
 What it does
 ============
-Pulls seven categories of "hidden waste" via the Azure Resource Graph REST
+Pulls ten categories of "hidden waste" via the Azure Resource Graph REST
 API, then estimates monthly £ cost from Cost Management. Always Resource-Graph
 first (cheap, fast) then Cost-Management for actual £ on the IDs we found.
 
@@ -18,6 +18,12 @@ Categories
 5. Old snapshots > 90 days              (microsoft.compute/snapshots)
 6. Empty App Service Plans              (microsoft.web/serverfarms)
 7. Idle load balancers (no backends)    (microsoft.network/loadbalancers)
+8. Hot-tier storage accounts with very low transactional activity
+                                        (microsoft.storage/storageaccounts)
+9. Untouched blob containers > 90 days
+                                        (microsoft.storage/.../containers)
+10. Premium file shares with materially oversized provisioned quota
+                                        (microsoft.storage/.../shares)
 
 Outputs
 -------
@@ -188,6 +194,56 @@ QUERIES: dict[str, str] = {
         "  sku=tostring(sku.name), "
         "  ruleCount, poolCount"
     ),
+    # Hot-tier storage accounts; a separate metric pass narrows to
+    # genuinely cold workloads (low transactions, non-trivial size).
+    "storage_cold_tier": (
+        "Resources "
+        "| where type =~ 'microsoft.storage/storageaccounts' "
+        "| where tostring(properties.accessTier) =~ 'Hot' "
+        "| where tostring(kind) in~ "
+        "        ('StorageV2', 'BlobStorage', 'BlockBlobStorage') "
+        "| extend ageDays = datetime_diff('day', now(), "
+        "        todatetime(properties.creationTime)) "
+        "| where ageDays >= 30 "
+        "| project subscriptionId, resourceGroup, name, location, "
+        "  id=tolower(id), "
+        "  sku=tostring(sku.name), "
+        "  tier=tostring(properties.accessTier), "
+        "  ageDays"
+    ),
+    "storage_untouched_container": (
+        "Resources "
+        "| where type =~ "
+        "        'microsoft.storage/storageaccounts/blobservices/containers' "
+        "| extend ageDays = datetime_diff('day', now(), "
+        "        todatetime(properties.lastModifiedTime)) "
+        "| where ageDays >= 90 "
+        "| extend account = tostring(split(name, '/')[0]) "
+        "| project subscriptionId, resourceGroup, name, location, "
+        "  id=tolower(id), "
+        "  ageDays, account"
+    ),
+    # Joins shares to parent account so we can filter on Premium files SKU.
+    "storage_oversize_premium": (
+        "Resources "
+        "| where type =~ "
+        "        'microsoft.storage/storageaccounts/fileservices/shares' "
+        "| extend acctId = tolower(tostring(split(tolower(id), "
+        "        '/fileservices/')[0])) "
+        "| join kind=inner ( "
+        "    Resources "
+        "    | where type =~ 'microsoft.storage/storageaccounts' "
+        "    | where tostring(kind) =~ 'FileStorage' "
+        "    | project acctId = tolower(id), "
+        "              accountSku=tostring(sku.name) "
+        "  ) on acctId "
+        "| extend quotaGb = tolong(properties.shareQuota) "
+        "| where quotaGb >= 1024 "
+        "| project subscriptionId, resourceGroup, name, location, "
+        "  id=tolower(id), "
+        "  sku=accountSku, "
+        "  sizeGb=quotaGb"
+    ),
 }
 
 
@@ -212,8 +268,198 @@ def graph_query(query: str, subs: list[str]) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
-# Cost Management lookups (per-resource monthly £)
+# Azure Monitor metric helpers (used by storage detectors)
 # ---------------------------------------------------------------------------
+
+def az_metrics_summary(resource_id: str, *, metric: str, aggregation: str,
+                       days: int = 30) -> tuple[float | None, int]:
+    """Return (aggregate, sample_count) for ``metric`` on ``resource_id``.
+
+    ``aggregation`` is the API aggregation passed to ``az monitor metrics
+    list`` (``Total``, ``Average`` etc.). The returned aggregate is the
+    sum-of-totals or mean-of-averages over the window — coarse on purpose;
+    the storage detectors only care about order-of-magnitude.
+
+    Returns ``(None, 0)`` on any failure (permission denied, metric
+    unsupported, throttled). Callers must treat ``None`` as "metric
+    unavailable" rather than "no activity".
+    """
+    end = datetime.now(timezone.utc) - timedelta(seconds=1)
+    start = end - timedelta(days=days)
+    args = [
+        "monitor", "metrics", "list",
+        "--resource", resource_id,
+        "--metric", metric,
+        "--aggregation", aggregation,
+        "--interval", "P1D",
+        "--start-time", start.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "--end-time", end.strftime("%Y-%m-%dT%H:%M:%SZ"),
+    ]
+    try:
+        data = az(args)
+    except RuntimeError:
+        return (None, 0)
+    series = data.get("value") or []
+    if not series:
+        return (None, 0)
+    ts = series[0].get("timeseries") or []
+    if not ts:
+        return (None, 0)
+    pts = ts[0].get("data") or []
+    key = aggregation.lower()
+    vals = [float(p.get(key, 0.0) or 0.0) for p in pts if key in p]
+    if not vals:
+        return (0.0, 0)
+    if aggregation.lower() == "total":
+        return (sum(vals), len(vals))
+    return (sum(vals) / len(vals), len(vals))
+
+
+def az_metric_per_dimension(resource_id: str, *, metric: str, aggregation: str,
+                            dimension: str, days: int = 30
+                            ) -> dict[str, float] | None:
+    """Pull a metric grouped by a dimension; return ``{dim_value -> aggregate}``.
+
+    Returns ``None`` on failure so callers can distinguish "metric
+    unavailable" from "all values are zero".
+    """
+    end = datetime.now(timezone.utc) - timedelta(seconds=1)
+    start = end - timedelta(days=days)
+    args = [
+        "monitor", "metrics", "list",
+        "--resource", resource_id,
+        "--metric", metric,
+        "--aggregation", aggregation,
+        "--interval", "P1D",
+        "--filter", f"{dimension} eq '*'",
+        "--start-time", start.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "--end-time", end.strftime("%Y-%m-%dT%H:%M:%SZ"),
+    ]
+    try:
+        data = az(args)
+    except RuntimeError:
+        return None
+    series = data.get("value") or []
+    if not series:
+        return None
+    out: dict[str, float] = {}
+    key = aggregation.lower()
+    for ts in series[0].get("timeseries", []) or []:
+        meta = {m["name"]["value"]: m["value"]
+                for m in ts.get("metadatavalues", []) or []
+                if isinstance(m.get("name"), dict)}
+        dim_val = meta.get(dimension, "")
+        if not dim_val:
+            continue
+        pts = ts.get("data") or []
+        vals = [float(p.get(key, 0.0) or 0.0) for p in pts if key in p]
+        if not vals:
+            continue
+        agg = (sum(vals) if aggregation.lower() == "total"
+               else sum(vals) / len(vals))
+        out[dim_val.lower()] = agg
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Storage detector refinement
+# ---------------------------------------------------------------------------
+
+# Cold-tier thresholds. A Hot-tier account is "actually cold" if it stores
+# meaningful data AND sees very few transactions. Both are coarse — we lean
+# conservative to keep the false-positive rate down.
+STORAGE_COLD_TIER_MIN_USED_GIB = 100.0
+STORAGE_COLD_TIER_MAX_TX_30D = 30_000  # ~1,000 / day average
+
+# Premium files: West-Europe LRS list price. Hand-coded constant — the
+# engines stay stdlib-only so we cannot pull the retail-price API.
+PREMIUM_FILES_GBP_PER_GIB_MO = 0.16
+# Only flag if quota is non-trivial AND used << provisioned.
+STORAGE_OVERSIZE_PREMIUM_MIN_QUOTA_GIB = 1024  # filtered in KQL too
+STORAGE_OVERSIZE_PREMIUM_USED_FRACTION = 0.5
+
+
+def refine_storage_findings(raw: list["Finding"]) -> list["Finding"]:
+    """Best-effort metric-based refinement for the storage detectors.
+
+    - ``storage_cold_tier``: keeps only Hot accounts with <30k transactions
+      over 30d AND >=100 GiB of stored data. If metrics are unavailable
+      (permissions / throttle) the candidate is kept with ``extra`` flagged
+      so the output is honest about the uncertainty.
+    - ``storage_oversize_premium``: keeps only premium file shares whose
+      ``FileCapacity`` is < 50% of the provisioned quota. Uses the parent
+      account's ``fileServices/default`` metrics with a per-share filter;
+      again, missing metrics keeps the candidate with an ``extra`` note.
+    """
+    kept: list["Finding"] = []
+    # Group oversize-premium candidates by parent account so we make one
+    # metrics call per account, not per share.
+    oversize_by_account: dict[str, list[Finding]] = {}
+
+    for f in raw:
+        if f.category == "storage_cold_tier":
+            tx, _ = az_metrics_summary(f.resource_id, metric="Transactions",
+                                       aggregation="Total", days=30)
+            used_bytes, _ = az_metrics_summary(f.resource_id,
+                                               metric="UsedCapacity",
+                                               aggregation="Average",
+                                               days=30)
+            if tx is None and used_bytes is None:
+                f.extra = "metrics unavailable; verify manually"
+                kept.append(f)
+                continue
+            tx_val = tx if tx is not None else 0.0
+            used_gib = ((used_bytes or 0.0) / (1024 ** 3))
+            if (tx_val < STORAGE_COLD_TIER_MAX_TX_30D
+                    and used_gib >= STORAGE_COLD_TIER_MIN_USED_GIB):
+                f.size_gb = int(used_gib)
+                f.extra = (f"~{used_gib:,.0f} GiB stored; "
+                           f"~{tx_val:,.0f} tx / 30d")
+                kept.append(f)
+            # else drop — Hot tier looks justified
+        elif f.category == "storage_oversize_premium":
+            # Parent account id = strip "/fileServices/default/shares/<n>"
+            parent = f.resource_id.split("/fileservices/")[0]
+            oversize_by_account.setdefault(parent, []).append(f)
+        else:
+            kept.append(f)
+
+    # Resolve oversize-premium with one metric call per parent account.
+    for parent, shares in oversize_by_account.items():
+        file_svc_id = f"{parent}/fileServices/default"
+        per_share = az_metric_per_dimension(
+            file_svc_id, metric="FileCapacity",
+            aggregation="Average", dimension="FileShare", days=30)
+        for s in shares:
+            quota = float(s.size_gb or 0)
+            # ARG `name` is "<account>/default/<share>"; share name is last seg.
+            share_name = s.name.split("/")[-1].lower() if s.name else ""
+            if per_share is None:
+                # Metric unavailable — keep the share but be transparent.
+                s.extra = (f"quota {quota:,.0f} GiB; usage unknown "
+                           f"(metric unavailable)")
+                kept.append(s)
+                continue
+            used_bytes = per_share.get(share_name)
+            if used_bytes is None:
+                s.extra = (f"quota {quota:,.0f} GiB; usage unknown "
+                           f"(no datapoints)")
+                kept.append(s)
+                continue
+            used_gib = used_bytes / (1024 ** 3)
+            if (quota >= STORAGE_OVERSIZE_PREMIUM_MIN_QUOTA_GIB
+                    and used_gib <= quota
+                                * STORAGE_OVERSIZE_PREMIUM_USED_FRACTION):
+                s.recoverable_gb = max(0.0, quota - used_gib)
+                s.extra = (f"quota {quota:,.0f} GiB; "
+                           f"used ~{used_gib:,.0f} GiB; "
+                           f"recoverable ~{s.recoverable_gb:,.0f} GiB")
+                kept.append(s)
+            # else drop — share is sized appropriately
+    return kept
+
+
+
 
 def fetch_resource_costs(sub_id: str, days: int = 30,
                          wanted: set[str] | None = None,
@@ -330,6 +576,7 @@ class Finding:
     extra: str = ""
     monthly_gbp: float = 0.0
     cost_source: str = ""   # 'cost_mgmt' / 'estimate' / 'unknown'
+    recoverable_gb: float = 0.0   # used by storage_oversize_premium
 
 
 def fetch_sub_name(sub_id: str) -> str:
@@ -348,6 +595,9 @@ CATEGORY_LABELS = {
     "old_snapshots":          "Old snapshots (>90d)",
     "empty_asp":              "Empty App Service Plans",
     "idle_load_balancers":    "Idle Standard load balancers",
+    "storage_cold_tier":          "Hot-tier storage accounts (cold workload)",
+    "storage_untouched_container": "Untouched blob containers (>90d)",
+    "storage_oversize_premium":   "Oversized premium file shares",
 }
 
 
@@ -376,6 +626,34 @@ def annotate_cost(finding: Finding, cost_map: dict[str, float],
         # Standard LB hourly + ~5 rules — we'll use £15/mo as conservative
         finding.monthly_gbp = 15.0
         finding.cost_source = "estimate"
+    elif finding.category == "storage_cold_tier":
+        # Account is hot-tier and looks cold but Cost Management has
+        # no row — likely a tiny / drain-only account. Don't fabricate
+        # savings; flag for manual review.
+        finding.monthly_gbp = 0.0
+        finding.cost_source = "unknown"
+    elif finding.category == "storage_untouched_container":
+        # Containers aren't a Cost Management dimension — surface as
+        # hygiene-only (same posture as orphan_nics).
+        finding.monthly_gbp = 0.0
+        finding.cost_source = "unknown"
+    elif finding.category == "storage_oversize_premium":
+        # Premium files line item is roughly quota * GBP/GiB-mo. We
+        # report the recoverable slice as the savings estimate.
+        if finding.recoverable_gb > 0:
+            finding.monthly_gbp = (finding.recoverable_gb
+                                   * PREMIUM_FILES_GBP_PER_GIB_MO)
+            finding.cost_source = "estimate"
+        elif finding.size_gb:
+            # Usage unknown — report the full provisioned-line ceiling
+            # so the row sorts proportional to its bill, but tag clearly
+            # as estimate (operator must confirm before remediating).
+            finding.monthly_gbp = (finding.size_gb
+                                   * PREMIUM_FILES_GBP_PER_GIB_MO)
+            finding.cost_source = "estimate"
+        else:
+            finding.monthly_gbp = 0.0
+            finding.cost_source = "unknown"
     else:
         finding.monthly_gbp = 0.0
         finding.cost_source = "unknown"
@@ -644,6 +922,80 @@ POLICY_TEMPLATES = {
         },
         "parameters": {},
     },
+    "storage_cold_tier": {
+        "displayName": "Audit storage accounts in Hot access tier",
+        "description": "Flags general-purpose v2 / blob storage accounts "
+                       "whose default access tier is Hot. Pair with a "
+                       "Workbook query on the Transactions / UsedCapacity "
+                       "metrics to narrow to the genuinely cold workloads "
+                       "before promoting to deny.",
+        "mode": "Indexed",
+        "policyType": "Custom",
+        "policyRule": {
+            "if": {
+                "allOf": [
+                    {"field": "type",
+                     "equals": "Microsoft.Storage/storageAccounts"},
+                    {"field": "kind",
+                     "in": ["StorageV2", "BlobStorage", "BlockBlobStorage"]},
+                    {"field": "Microsoft.Storage/storageAccounts/"
+                              "accessTier",
+                     "equals": "Hot"},
+                ]
+            },
+            "then": {"effect": "audit"}
+        },
+        "parameters": {},
+        "_note": "Policy can't read transaction or used-capacity metrics. "
+                 "Treat the audit hits as a candidate list and confirm "
+                 "via the engine's metric refinement pass before action.",
+    },
+    "storage_untouched_container": {
+        "displayName": "Audit blob containers (paired-Workbook detector)",
+        "description": "Flags blob containers — used as a counting hook "
+                       "only. Container `lastModifiedTime` cannot be "
+                       "evaluated by Policy.",
+        "mode": "Indexed",
+        "policyType": "Custom",
+        "policyRule": {
+            "if": {
+                "field": "type",
+                "equals":
+                    "Microsoft.Storage/storageAccounts/blobServices/containers"
+            },
+            "then": {"effect": "audit"}
+        },
+        "parameters": {},
+        "_note": "Policy cannot filter on container lastModifiedTime. Use "
+                 "this blanket rule with a Workbook KQL filter on "
+                 "`properties.lastModifiedTime` for the actual signal.",
+    },
+    "storage_oversize_premium": {
+        "displayName": "Audit large premium file shares",
+        "description": "Flags premium file shares with a provisioned quota "
+                       "of >=1 TiB. Premium files bill on provisioned "
+                       "capacity, so oversized quotas are pure waste.",
+        "mode": "Indexed",
+        "policyType": "Custom",
+        "policyRule": {
+            "if": {
+                "allOf": [
+                    {"field": "type",
+                     "equals":
+                         "Microsoft.Storage/storageAccounts/fileServices/shares"},
+                    {"field":
+                         "Microsoft.Storage/storageAccounts/fileServices/"
+                         "shares/shareQuota",
+                     "greaterOrEquals": 1024},
+                ]
+            },
+            "then": {"effect": "audit"}
+        },
+        "parameters": {},
+        "_note": "Policy can audit on shareQuota but cannot read the "
+                 "FileCapacity metric. Confirm via the engine's metric "
+                 "pass (or a Workbook) before taking action.",
+    },
 }
 
 
@@ -689,6 +1041,17 @@ def run(subs: list[str], out_dir: Path):
                 extra=str(r.get("power") or r.get("ruleCount") or ""),
             )
             raw_findings.append(f)
+
+    # Storage detectors need a metric-based second pass to filter the
+    # noisy "Hot tier" / "premium files quota" candidates down to the
+    # ones that are genuinely waste. Best-effort: missing metrics keep
+    # the candidate with an explanatory ``extra``.
+    storage_cats = {"storage_cold_tier", "storage_oversize_premium"}
+    if any(f.category in storage_cats for f in raw_findings):
+        print("[engine] Refining storage candidates with Azure Monitor "
+              "metrics (best-effort; missing metrics are kept and tagged)…",
+              flush=True)
+        raw_findings = refine_storage_findings(raw_findings)
 
     # Enrich with actual £ from Cost Management (one query per sub,
     # short-circuited as soon as every flagged resource for that sub
