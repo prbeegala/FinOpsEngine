@@ -55,6 +55,27 @@ python context_enricher.py `
 `az login` required. ~3–8 minutes per 1 500 findings (rate-limited by
 Resource Graph, not Cost Management — much faster than `hidden-waste`).
 
+### Dry-run / plan-only mode
+
+Add `--plan-only` to write the planned per-owner Issue bodies to
+`<out-dir>/issues-planned/` instead of `<out-dir>/issues/` and skip
+the actual Issue creation in CI:
+
+```pwsh
+python context_enricher.py `
+  --hidden-waste-csv ./out/hidden-waste/hidden-waste-<date>.csv `
+  --out-dir ./out/enriched `
+  --plan-only
+```
+
+This is the **recommended posture for the first run on a new tenant** —
+the nightly workflow's `gh issue create` step globs `issues/*.md`, so
+writing into `issues-planned/` is a no-op for CI. Reviewers can grep
+the directory and confirm the bodies look sane before re-running
+without the flag (or with `plan_only=false` from `workflow_dispatch`).
+Each body carries a `> ⚠️ DRY-RUN — --plan-only mode.` banner so
+operators can't accidentally treat a planned body as a published one.
+
 ## Outputs
 
 - `enriched-<date>.csv` — every finding with owner / criticality / env /
@@ -63,6 +84,8 @@ Resource Graph, not Cost Management — much faster than `hidden-waste`).
 - `issues/<owner-slug>-<date>.md` — per-owner Issue body, ready for
   `gh issue create -F`. Each body links back to the source engine and
   asks for `accept` / `defer` / `reject` replies per row.
+- `issues-planned/<owner-slug>-<date>.md` — same content, dry-run
+  banner, written only when `--plan-only` is set.
 
 ## Customising the tag taxonomy
 

@@ -385,12 +385,19 @@ def write_summary_md(path: Path, findings: list[Finding]) -> None:
     path.write_text("\n".join(L), encoding="utf-8")
 
 
-def write_owner_issue(path: Path, owner: str, items: list[Finding]) -> None:
+def write_owner_issue(path: Path, owner: str, items: list[Finding],
+                      *, plan_only: bool = False) -> None:
     items = sorted(items, key=lambda x: -x.monthly_gbp)
     monthly = sum(f.monthly_gbp for f in items)
     annual  = monthly * 12
 
     L = []
+    if plan_only:
+        L.append("> ⚠️ **DRY-RUN — `--plan-only` mode.** No GitHub Issue was "
+                 "opened for this body. To actually open Issues, re-run "
+                 "without `--plan-only` (engine) or with the workflow input "
+                 "`plan_only=false` (CI).")
+        L.append("")
     L.append(f"## FinOps remediation queue — {owner or 'Unowned'}")
     L.append("")
     L.append(f"**{len(items)} findings · ~£{monthly:,.0f} / month "
@@ -441,9 +448,17 @@ def write_owner_issue(path: Path, owner: str, items: list[Finding]) -> None:
 
 def run(hidden_waste_csv: Path | None,
         rightsizing_csv: Path | None,
-        out_dir: Path) -> None:
+        out_dir: Path,
+        *,
+        plan_only: bool = False) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
-    issues_dir = out_dir / "issues"
+    # In plan-only (dry-run) mode we write the planned per-owner Issue
+    # bodies to ``issues-planned/`` instead of ``issues/`` so the nightly
+    # workflow's ``gh issue create`` loop (which globs ``issues/*.md``)
+    # finds nothing and is effectively a no-op. Reviewers can grep the
+    # ``issues-planned/`` directory before flipping the flag off.
+    issues_dirname = "issues-planned" if plan_only else "issues"
+    issues_dir = out_dir / issues_dirname
     issues_dir.mkdir(exist_ok=True)
 
     findings: list[Finding] = []
@@ -523,13 +538,18 @@ def run(hidden_waste_csv: Path | None,
             by_owner[f.owner or "_unowned"].append(f)
     for owner, items in by_owner.items():
         write_owner_issue(issues_dir / f"{slug(owner)}-{date}.md",
-                          owner if owner != "_unowned" else "Unowned", items)
+                          owner if owner != "_unowned" else "Unowned", items,
+                          plan_only=plan_only)
 
     print(f"[enricher] Done.")
     print(f"  - {csv_path}")
     print(f"  - {md_path}")
     print(f"  - {html_path}")
-    print(f"  - {issues_dir}/  ({len(by_owner)} per-owner issue templates)")
+    label = "planned (dry-run)" if plan_only else "per-owner issue templates"
+    print(f"  - {issues_dir}/  ({len(by_owner)} {label})")
+    if plan_only:
+        print("[enricher] PLAN-ONLY: no GitHub Issues will be opened. "
+              "Review the bodies above, then re-run without --plan-only.")
     high = sum(1 for f in findings if f.confidence == "HIGH")
     med  = sum(1 for f in findings if f.confidence == "MED")
     low  = sum(1 for f in findings if f.confidence == "LOW")
@@ -543,10 +563,23 @@ def main():
     ap.add_argument("--hidden-waste-csv", type=Path)
     ap.add_argument("--rightsizing-csv", type=Path)
     ap.add_argument("--out-dir", type=Path, required=True)
+    ap.add_argument(
+        "--plan-only",
+        action="store_true",
+        help=(
+            "Dry-run: write planned per-owner Issue bodies to "
+            "out-dir/issues-planned/ instead of issues/, and print a "
+            "PLAN-ONLY banner. No GitHub Issues are opened — the nightly "
+            "workflow's gh issue create step globs issues/*.md and finds "
+            "nothing. Reviewers can grep issues-planned/ before flipping "
+            "the flag off."
+        ),
+    )
     args = ap.parse_args()
     if not args.hidden_waste_csv and not args.rightsizing_csv:
         ap.error("Provide at least one of --hidden-waste-csv / --rightsizing-csv.")
-    run(args.hidden_waste_csv, args.rightsizing_csv, args.out_dir)
+    run(args.hidden_waste_csv, args.rightsizing_csv, args.out_dir,
+        plan_only=args.plan_only)
 
 
 if __name__ == "__main__":

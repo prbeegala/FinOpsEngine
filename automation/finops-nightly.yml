@@ -36,6 +36,11 @@ on:
         description: "Comma-separated subscription IDs (defaults to FINOPS_SUBS var)"
         required: false
         type: string
+      plan_only:
+        description: "Dry-run: write planned Issue bodies to issues-planned/ and skip gh issue create. Recommended for the first run on a new tenant."
+        required: false
+        type: boolean
+        default: true
 
 permissions:
   id-token: write       # OIDC for `azure/login`.
@@ -110,6 +115,9 @@ jobs:
           ARGS="--out-dir $OUT_BASE/Enriched"
           [ -n "$HIDDEN_CSV" ] && ARGS="$ARGS --hidden-waste-csv $HIDDEN_CSV"
           [ -n "$RIGHT_CSV"  ] && ARGS="$ARGS --rightsizing-csv $RIGHT_CSV"
+          if [ "${{ inputs.plan_only }}" = "true" ]; then
+            ARGS="$ARGS --plan-only"
+          fi
 
           if [ -z "$HIDDEN_CSV" ] && [ -z "$RIGHT_CSV" ]; then
             echo "::warning::No engine CSVs found — skipping enrichment."
@@ -126,7 +134,7 @@ jobs:
           retention-days: 30
 
       - name: Open / update per-owner issues
-        if: success()
+        if: success() && inputs.plan_only != true
         env:
           GH_TOKEN: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
         run: |
@@ -144,6 +152,12 @@ jobs:
                 --label "finops,auto-generated" || true
             fi
           done
+
+      - name: Plan-only summary
+        if: success() && inputs.plan_only == true
+        run: |
+          echo "::notice::PLAN-ONLY run — Issue bodies written to issues-planned/. No GitHub Issues opened. Re-run with plan_only=false to publish."
+          ls -lah "$OUT_BASE"/Enriched/issues-planned/ 2>/dev/null || true
 
       - name: Headline summary
         if: success()

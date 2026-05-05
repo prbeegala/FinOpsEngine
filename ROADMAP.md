@@ -126,7 +126,7 @@ These should land before the engine is rolled out widely.
 - 🛡 🟡 **Output-schema versioning** — version the CSV/MD output formats so
   Workbooks and downstream Issue templates don't break silently when a
   column is added or renamed.
-- 🛡 🟢 **context-enricher `--plan-only` dry-run** — write planned Issue
+- 🛡 🟢 ~~**context-enricher `--plan-only` dry-run**~~ — *delivered in [#21](https://github.com/prbeegala/FinOpsEngine/issues/21).* write planned Issue
   bodies to disk for review *before* opening real GitHub Issues. The
   current path will happily open hundreds of issues in one run.
 
