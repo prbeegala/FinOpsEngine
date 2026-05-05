@@ -10,6 +10,18 @@ as detailed in [`VERSIONING.md`](./VERSIONING.md).
 
 ### Added
 
+- **`context-enricher`: `--plan-only` dry-run mode (issue [#21](https://github.com/prbeegala/FinOpsEngine/issues/21)).**
+  When the flag is set, per-owner Issue bodies are written to
+  `<out-dir>/issues-planned/` instead of `<out-dir>/issues/` and each
+  body carries a `> ⚠️ DRY-RUN — --plan-only mode.` banner. The
+  nightly workflow's `gh issue create` loop globs `issues/*.md`, so a
+  plan-only run is a no-op for CI — reviewers can grep
+  `issues-planned/` before flipping the flag off. The
+  `finops-nightly.yml` workflow gains a `plan_only` `workflow_dispatch`
+  input (default `true`) that wires through to the engine and
+  short-circuits the issue-create step. Recommended posture for the
+  first run on a new tenant.
+
 - **`hidden-waste`: PaaS rightsizing — under-utilised App Service Plans
   and idle Container Apps (issue [#4](https://github.com/prbeegala/FinOpsEngine/issues/4)).**
   Adds `idle_app_service_plan` (paid SKUs only — `Free` / `Shared` /
