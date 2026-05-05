@@ -1,13 +1,13 @@
 # hidden-waste
 
-Detects the seven recurring **hidden-waste** classes that Azure Advisor
+Detects the twelve recurring **hidden-waste** classes that Azure Advisor
 under-reports or misses, prices them with actual Cost Management spend, and
 emits an *audit-mode* Azure Policy starter pack so platform teams can codify
 the guardrails.
 
 ## What it does
 
-1. Runs ten **Resource Graph** queries in a single pass across the supplied
+1. Runs twelve **Resource Graph** queries in a single pass across the supplied
    subscriptions:
    - Unattached managed disks (`diskState =~ 'Unattached'` AND no `managedBy`).
    - Unused public IPs (no `ipConfiguration` AND no `natGateway`).
@@ -16,6 +16,16 @@ the guardrails.
      `deallocated`; still billed for compute).
    - Old snapshots (`timeCreated > 90 days` ago).
    - Empty App Service Plans (`numberOfSites == 0`).
+   - **Under-utilised App Service Plans** (`numberOfSites >= 1`, paid
+     SKU, P95 of hourly `CpuPercentage` Maximum below
+     `--asp-idle-cpu-p95-max` (default 5 %) over `--asp-idle-days`
+     (default 14). Excludes `Free` / `Shared` / `Dynamic` /
+     `ElasticPremium` — Functions Premium needs its own heuristic
+     and is intentionally out of scope here.
+   - **Idle Container Apps** (`template.scale.minReplicas >= 1`, total
+     `Requests <= --ca-idle-requests-max` (default 0) AND average
+     `Replicas` held within 0.1 of `minReplicas` over `--ca-idle-days`
+     (default 14)).
    - Idle Standard load balancers (no rules AND no backend pools).
    - Hot-tier storage accounts (`accessTier =~ 'Hot'`, GPv2 / blob kinds,
      creation > 30 days). Refined by Azure Monitor metrics —
@@ -76,6 +86,11 @@ python hidden_waste.py `
 | `--exclude-subs <a,b>` | When using `--all-subs`, skip these IDs/names. |
 | `--tenant <guid>` | Limit `--all-subs` to a single tenant. |
 | `--include-disabled` | Include subs whose state is not Enabled. |
+| `--asp-idle-cpu-p95-max <pct>` | App Service Plan: P95 hourly Maximum `CpuPercentage` below this threshold flags the plan as under-utilised. Default `5.0`. |
+| `--asp-idle-days <n>` | App Service Plan observation window in days. Default `14`. |
+| `--ca-idle-requests-max <n>` | Container Apps: total `Requests` ≤ this counts as idle. Default `0`. |
+| `--ca-idle-days <n>` | Container Apps observation window in days. Default `14`. |
+| `--skip-metrics` | Skip Azure Monitor calls. PaaS rightsizing candidates are dropped (they can't be qualified without metrics); storage detectors fall back to their own posture. |
 
 ## Outputs
 
@@ -106,6 +121,16 @@ python hidden_waste.py `
   `metrics unavailable` tag; the operator must verify before action.
   `Transactions` and `UsedCapacity` thresholds are conservative
   (1,000 tx / day average, ≥ 100 GiB stored).
+- **PaaS rightsizing requires metric access.** Both the under-utilised
+  ASP and idle Container Apps detectors need `Microsoft.Insights/
+  metrics/read` (built-in `Reader` is usually sufficient; custom
+  Reader-like roles may not be). Candidates whose metrics fail to
+  return are *dropped*, not surfaced — the ARG predicate alone
+  ("ASP with apps deployed", "CA with min-replicas ≥ 1") is not
+  waste-suspect on its own. `--skip-metrics` short-circuits both
+  categories entirely. Each candidate triggers up to two `az monitor
+  metrics list` calls, so very large tenants should set realistic
+  windows (`--asp-idle-days`, `--ca-idle-days`) for run-time control.
 - **Untouched blob containers carry no £ attribution.** Cost Management
   doesn't break out cost by container — the parent storage account is the
   smallest billable resource ID. Treat as a hygiene signal.
@@ -145,7 +170,7 @@ and what to pair it with.
 ## Tooling provenance
 
 - Resource Graph via `az graph query` with `$skipToken` paging (default page
-  size 1 000; capped at 100 pages — none of the seven categories typically
+  size 1 000; capped at 100 pages — none of the twelve categories typically
   have more than ~5 000 rows in even very large tenants).
 - Cost Management `/query` REST API (api-version `2023-11-01`), POST body
   via temp-file to dodge cmd.exe quoting bugs.

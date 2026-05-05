@@ -26,7 +26,7 @@ practitioner would do by hand:
 | Engine | Replaces / improves on | Headline output |
 |---|---|---|
 | **`rightsizing-peak`** | Azure Advisor's *average*-based VM rightsizing | A list of Advisor recommendations that would have been **unsafe** under P95/P99 peak data |
-| **`hidden-waste`** | Manual orphan / lifecycle hunts in Cost Management | Ten categories of waste, **priced** against actual £, plus a starter Azure Policy pack |
+| **`hidden-waste`** | Manual orphan / lifecycle hunts in Cost Management | Twelve categories of waste, **priced** against actual £, plus a starter Azure Policy pack |
 | **`ri-coverage`** | Portal *Reservations → Recommendations* (single-SKU view) | A risk-scored shortlist that fits inside **your cancellation-exposure buffer** |
 | **`context-enricher`** | Spreadsheet round-trips between FinOps and domain teams | Per-owner GitHub Issue bodies — auto-routed via `CODEOWNERS` |
 
@@ -216,8 +216,8 @@ manual-validation overhead this engine eliminates.
 # Hidden Waste & Lifecycle
 
 - Subscriptions scanned: 20
-- Findings: **1,135**
-- Estimated monthly £ recoverable: **£9,744** (~£116,923 / yr)
+- Findings: **1,196**
+- Estimated monthly £ recoverable: **£12,952** (~£155,424 / yr)
 
 | Category                       | Count | Monthly £ | Annualised £ |
 |--------------------------------|------:|----------:|-------------:|
@@ -226,11 +226,13 @@ manual-validation overhead this engine eliminates.
 | Hot-tier storage accounts (cold workload) | 11 | £2,210 |      £26,520 |
 | Empty App Service Plans        |    20 |    £1,717 |      £20,607 |
 | Oversized premium file shares  |     6 |      £820 |       £9,840 |
+| Under-utilised App Service Plans |   1 |      £178 |       £2,136 |
 | Unused public IPs              |    46 |       £91 |       £1,098 |
 | Idle Standard load balancers   |     2 |       £30 |         £360 |
 | Stopped-not-deallocated VMs    |     1 |     £6.67 |          £80 |
 | Orphan NICs                    |   420 |     £0.00 |        £0.00 |
 | Untouched blob containers (>90d) | 38 |     £0.00 |        £0.00 |
+| Idle Container Apps (warm replicas) | 5 |     £0.00 |        £0.00 |
 ```
 
 ### 3. RI / SP shortlist ([full file](samples/ri-coverage/ri-shortlist-20260101.md))
@@ -277,7 +279,7 @@ Each engine has its own README with full documentation:
 
 - [`tools/rightsizing-peak/README.md`](tools/rightsizing-peak/README.md) —
   P95/P99 decision tree, Advisor diff, downsize ladders.
-- [`tools/hidden-waste/README.md`](tools/hidden-waste/README.md) — the seven
+- [`tools/hidden-waste/README.md`](tools/hidden-waste/README.md) — the twelve
   waste classes, pricing fallbacks, Policy pack.
 - [`tools/ri-coverage/README.md`](tools/ri-coverage/README.md) — risk model,
   buffer guardrail, and limitations.

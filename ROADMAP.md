@@ -41,7 +41,7 @@ Most are direct extensions of `hidden-waste` or `rightsizing-peak`.
 - 🟡 **AKS node-pool peak rightsizing** — node pools sized to peak pod
   requests rather than P95 actuals; under-utilised system pools.
   `rightsizing-peak` only handles VMs/VMSS today.
-- 🟢 **App Service / Container Apps rightsizing** — P1v3 plans at <5% CPU,
+- 🟢 ~~**App Service / Container Apps rightsizing**~~ — *delivered in [#4](https://github.com/prbeegala/FinOpsEngine/issues/4).* P1v3 plans at <5% CPU,
   Container Apps with `min-replicas > 0` and no traffic. Today only the
   *empty* App Service Plan case is detected.
 - 🟢 **Dev/test auto-shutdown gap** — non-prod-tagged VMs / SQL / AKS
@@ -186,6 +186,11 @@ fit) translate; the data sources don't.
 
 ## Recently shipped
 
+- `v0.2.0` — twelve `hidden-waste` categories (added under-utilised App
+  Service Plans and idle Container Apps via Azure Monitor metric refinement;
+  see [#4](https://github.com/prbeegala/FinOpsEngine/issues/4). Five new
+  CLI flags (`--asp-idle-cpu-p95-max`, `--asp-idle-days`,
+  `--ca-idle-requests-max`, `--ca-idle-days`, `--skip-metrics`).
 - `v0.1.3` — fixture-driven test infrastructure (`tests/`, pyproject.toml
   pytest config, conftest CSV diff helper). `analyse_vm` decision-tree
   parametrised across 5 verdicts; `context-enricher` end-to-end snapshot

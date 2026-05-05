@@ -5,9 +5,10 @@ Part of the FinOps Engine — orphan/lifecycle waste detection.
 
 What it does
 ============
-Pulls ten categories of "hidden waste" via the Azure Resource Graph REST
-API, then estimates monthly £ cost from Cost Management. Always Resource-Graph
-first (cheap, fast) then Cost-Management for actual £ on the IDs we found.
+Pulls twelve categories of "hidden waste" via the Azure Resource Graph
+REST API, then estimates monthly £ cost from Cost Management. Always
+Resource-Graph first (cheap, fast) then Cost-Management for actual £ on
+the IDs we found.
 
 Categories
 ----------
@@ -17,12 +18,14 @@ Categories
 4. Stopped-not-deallocated VMs          (microsoft.compute/virtualmachines)
 5. Old snapshots > 90 days              (microsoft.compute/snapshots)
 6. Empty App Service Plans              (microsoft.web/serverfarms)
-7. Idle load balancers (no backends)    (microsoft.network/loadbalancers)
-8. Hot-tier storage accounts with very low transactional activity
+7. Under-utilised App Service Plans     (microsoft.web/serverfarms)
+8. Idle Container Apps (warm replicas)  (microsoft.app/containerapps)
+9. Idle load balancers (no backends)    (microsoft.network/loadbalancers)
+10. Hot-tier storage accounts with very low transactional activity
                                         (microsoft.storage/storageaccounts)
-9. Untouched blob containers > 90 days
+11. Untouched blob containers > 90 days
                                         (microsoft.storage/.../containers)
-10. Premium file shares with materially oversized provisioned quota
+12. Premium file shares with materially oversized provisioned quota
                                         (microsoft.storage/.../shares)
 
 Outputs
@@ -229,6 +232,36 @@ QUERIES: dict[str, str] = {
         "  id=tolower(id), "
         "  ageDays, account"
     ),
+    # App Service Plans with deployed apps but very low CPU. The
+    # `empty_asp` detector already covers the zero-app case; this one
+    # finds the *over-provisioned* plans. Excludes Free / Shared /
+    # consumption (Y1) / Functions Premium (ElasticPremium) — the
+    # CPU-only heuristic doesn't apply cleanly to those.
+    "idle_app_service_plan": (
+        "Resources "
+        "| where type =~ 'microsoft.web/serverfarms' "
+        "| where tolong(properties.numberOfSites) >= 1 "
+        "| extend tier = tostring(sku.tier) "
+        "| where tier !in~ "
+        "        ('Free', 'Shared', 'Dynamic', 'ElasticPremium') "
+        "| project subscriptionId, resourceGroup, name, location, "
+        "  id=tolower(id), "
+        "  sku=tostring(sku.name), "
+        "  tier=tier"
+    ),
+    # Container Apps holding warm replicas. The metric pass narrows to
+    # ones with no traffic over the window. Skipped if `minReplicas`
+    # is missing or 0 (already idle-cost-optimal).
+    "idle_container_app": (
+        "Resources "
+        "| where type =~ 'microsoft.app/containerapps' "
+        "| extend min_replicas = tolong("
+        "        properties.template.scale.minReplicas) "
+        "| where min_replicas >= 1 "
+        "| project subscriptionId, resourceGroup, name, location, "
+        "  id=tolower(id), "
+        "  extra=tostring(min_replicas)"
+    ),
     # Joins shares to parent account so we can filter on Premium files SKU.
     "storage_oversize_premium": (
         "Resources "
@@ -276,6 +309,69 @@ def graph_query(query: str, subs: list[str]) -> list[dict]:
 # ---------------------------------------------------------------------------
 # Azure Monitor metric helpers (used by storage detectors)
 # ---------------------------------------------------------------------------
+
+def az_metric_timeseries(resource_id: str, *, metric: str, aggregation: str,
+                         days: int, interval: str = "PT1H"
+                         ) -> list[float] | None:
+    """Return raw timeseries datapoints for ``metric`` on ``resource_id``.
+
+    Used by the PaaS detectors which need percentiles (P95) of hourly
+    samples — distinct from ``az_metrics_summary`` which collapses the
+    series to one number.
+
+    Returns ``None`` on any failure (permission denied, metric not
+    supported, throttled). Returns an empty list if the call succeeded
+    but produced no datapoints. Datapoints with no value for the
+    requested aggregation are skipped.
+    """
+    end = datetime.now(timezone.utc) - timedelta(seconds=1)
+    start = end - timedelta(days=days)
+    args = [
+        "monitor", "metrics", "list",
+        "--resource", resource_id,
+        "--metric", metric,
+        "--aggregation", aggregation,
+        "--interval", interval,
+        "--start-time", start.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "--end-time", end.strftime("%Y-%m-%dT%H:%M:%SZ"),
+    ]
+    try:
+        data = az(args)
+    except RuntimeError:
+        return None
+    series = data.get("value") or []
+    if not series:
+        return None
+    ts = series[0].get("timeseries") or []
+    if not ts:
+        return None
+    pts = ts[0].get("data") or []
+    key = aggregation.lower()
+    out: list[float] = []
+    for p in pts:
+        if key in p and p.get(key) is not None:
+            out.append(float(p[key]))
+    return out
+
+
+def _percentile(values: list[float], q: float) -> float:
+    """Linear-interpolation percentile; ``q`` is in ``[0, 100]``.
+
+    Returns ``0.0`` for an empty list. Stdlib only — no numpy.
+    """
+    if not values:
+        return 0.0
+    if q <= 0:
+        return float(min(values))
+    if q >= 100:
+        return float(max(values))
+    s = sorted(values)
+    pos = (len(s) - 1) * (q / 100.0)
+    lo = int(pos)
+    hi = min(lo + 1, len(s) - 1)
+    frac = pos - lo
+    return s[lo] + (s[hi] - s[lo]) * frac
+
 
 def az_metrics_summary(resource_id: str, *, metric: str, aggregation: str,
                        days: int = 30) -> tuple[float | None, int]:
@@ -465,6 +561,109 @@ def refine_storage_findings(raw: list["Finding"]) -> list["Finding"]:
     return kept
 
 
+# ---------------------------------------------------------------------------
+# PaaS rightsizing (App Service Plans / Container Apps) — issue #4
+# ---------------------------------------------------------------------------
+
+# Conservative defaults; all override-able via CLI flags. We chose drop
+# (not "keep with note") for missing-metric PaaS candidates because ARG
+# alone — a billed ASP with apps deployed, or a CA with min-replicas≥1
+# — isn't *prima facie* waste. Storage cold-tier has the opposite
+# property (Hot tier on a >30d account is already mildly suspicious).
+ASP_IDLE_CPU_P95_MAX_DEFAULT = 5.0
+ASP_IDLE_DAYS_DEFAULT = 14
+ASP_COVERAGE_MIN = 0.80
+CA_IDLE_REQUESTS_MAX_DEFAULT = 0
+CA_IDLE_DAYS_DEFAULT = 14
+
+
+def refine_paas_findings(raw: list["Finding"],
+                         *,
+                         asp_days: int,
+                         asp_cpu_p95_max: float,
+                         ca_days: int,
+                         ca_requests_max: int,
+                         skip_metrics: bool = False) -> list["Finding"]:
+    """Filter idle ASP / Container App candidates by Azure Monitor metrics.
+
+    See module docstring for thresholds. Behaviour summary:
+
+    - ``--skip-metrics``: drop every PaaS candidate. Without metrics
+      these aren't waste-suspect, and emitting them would flood the
+      report with unverified noise (different posture from the storage
+      detectors, which have a configuration-shaped signal of their own).
+    - ASP: pull hourly ``CpuPercentage`` (Maximum). If the metric call
+      fails, drop the candidate (logged in the summary). Compute P95;
+      flag if ``coverage >= 80% AND P95 < threshold``.
+    - CA: pull ``Requests`` (Total) and ``Replicas`` (Average). If
+      either call fails, drop. Flag if ``Requests <= threshold AND
+      Replicas held at ~min_replicas`` (within 0.1).
+    """
+    kept: list["Finding"] = []
+    paas_cats = {"idle_app_service_plan", "idle_container_app"}
+    if skip_metrics:
+        for f in raw:
+            if f.category not in paas_cats:
+                kept.append(f)
+        return kept
+
+    metric_failures = 0
+    for f in raw:
+        if f.category not in paas_cats:
+            kept.append(f)
+            continue
+
+        if f.category == "idle_app_service_plan":
+            vals = az_metric_timeseries(
+                f.resource_id, metric="CpuPercentage",
+                aggregation="Maximum", days=asp_days, interval="PT1H")
+            if vals is None:
+                metric_failures += 1
+                continue  # drop — see docstring
+            expected = asp_days * 24
+            coverage = (len(vals) / expected) if expected else 0.0
+            if coverage < ASP_COVERAGE_MIN:
+                continue
+            p95 = _percentile(vals, 95)
+            if p95 < asp_cpu_p95_max:
+                tier = f.sku or "current SKU"
+                f.extra = (f"P95 CPU {p95:.1f}% / {asp_days}d "
+                           f"(coverage {coverage * 100:.0f}%) — "
+                           f"downgrade {tier} to a smaller SKU")
+                kept.append(f)
+            # else drop — workload genuinely uses the plan
+
+        else:  # idle_container_app
+            try:
+                min_replicas = int(f.extra) if f.extra else 1
+            except ValueError:
+                min_replicas = 1
+            req_total, _ = az_metrics_summary(
+                f.resource_id, metric="Requests",
+                aggregation="Total", days=ca_days)
+            replicas_avg, _ = az_metrics_summary(
+                f.resource_id, metric="Replicas",
+                aggregation="Average", days=ca_days)
+            if req_total is None or replicas_avg is None:
+                metric_failures += 1
+                continue  # drop — see docstring
+            warm = abs(replicas_avg - min_replicas) <= 0.1
+            quiet = req_total <= ca_requests_max
+            if warm and quiet:
+                f.extra = (f"{int(req_total):,} requests / {ca_days}d, "
+                           f"replicas held at ~{replicas_avg:.1f} "
+                           f"(min-replicas={min_replicas}) — "
+                           f"set min-replicas: 0")
+                kept.append(f)
+            # else drop — traffic or scale-down already happens
+
+    if metric_failures:
+        print(f"  ⚠ {metric_failures} PaaS candidate(s) dropped "
+              f"(metrics unavailable; check Monitoring Reader RBAC).",
+              flush=True)
+    return kept
+
+
 
 
 def fetch_resource_costs(sub_id: str, days: int = 30,
@@ -600,6 +799,8 @@ CATEGORY_LABELS = {
     "stopped_not_deallocated": "Stopped-not-deallocated VMs",
     "old_snapshots":          "Old snapshots (>90d)",
     "empty_asp":              "Empty App Service Plans",
+    "idle_app_service_plan":  "Under-utilised App Service Plans",
+    "idle_container_app":     "Idle Container Apps (warm replicas)",
     "idle_load_balancers":    "Idle Standard load balancers",
     "storage_cold_tier":          "Hot-tier storage accounts (cold workload)",
     "storage_untouched_container": "Untouched blob containers (>90d)",
@@ -660,6 +861,17 @@ def annotate_cost(finding: Finding, cost_map: dict[str, float],
         else:
             finding.monthly_gbp = 0.0
             finding.cost_source = "unknown"
+    elif finding.category == "idle_app_service_plan":
+        # ASPs have a Cost Management resource ID; if the cost_map
+        # didn't pick it up the resource may have been re-created
+        # mid-window or sit under a non-meter SKU. Don't fabricate.
+        finding.monthly_gbp = 0.0
+        finding.cost_source = "unknown"
+    elif finding.category == "idle_container_app":
+        # Same posture as idle_app_service_plan — CM has CA resource
+        # IDs but the consumption-vs-dedicated split can hide rows.
+        finding.monthly_gbp = 0.0
+        finding.cost_source = "unknown"
     else:
         finding.monthly_gbp = 0.0
         finding.cost_source = "unknown"
@@ -1002,6 +1214,59 @@ POLICY_TEMPLATES = {
                  "FileCapacity metric. Confirm via the engine's metric "
                  "pass (or a Workbook) before taking action.",
     },
+    "idle_app_service_plan": {
+        "displayName": "Audit non-empty App Service Plans (paid SKUs)",
+        "description": "Flags App Service Plans with at least one app on "
+                       "a paid (non-Free / Shared / Dynamic / "
+                       "ElasticPremium) SKU. Pair with a Workbook on "
+                       "the CpuPercentage metric to narrow to "
+                       "genuinely under-utilised plans before action.",
+        "mode": "Indexed",
+        "policyType": "Custom",
+        "policyRule": {
+            "if": {
+                "allOf": [
+                    {"field": "type",
+                     "equals": "Microsoft.Web/serverfarms"},
+                    {"field": "Microsoft.Web/serverfarms/numberOfSites",
+                     "greaterOrEquals": 1},
+                    {"field": "sku.tier",
+                     "notIn": ["Free", "Shared", "Dynamic",
+                               "ElasticPremium"]},
+                ]
+            },
+            "then": {"effect": "audit"}
+        },
+        "parameters": {},
+        "_note": "Policy can't read CPU metrics. Treat audit hits as "
+                 "the candidate list and confirm via the engine's "
+                 "metric refinement pass before taking action.",
+    },
+    "idle_container_app": {
+        "displayName": "Audit Container Apps with min-replicas >= 1",
+        "description": "Flags Container Apps configured to keep at "
+                       "least one replica warm at all times. Pair "
+                       "with a Workbook on the Requests / Replicas "
+                       "metrics to narrow to genuinely idle apps.",
+        "mode": "Indexed",
+        "policyType": "Custom",
+        "policyRule": {
+            "if": {
+                "allOf": [
+                    {"field": "type",
+                     "equals": "Microsoft.App/containerApps"},
+                    {"field": "Microsoft.App/containerApps/template."
+                              "scale.minReplicas",
+                     "greaterOrEquals": 1},
+                ]
+            },
+            "then": {"effect": "audit"}
+        },
+        "parameters": {},
+        "_note": "Policy can't read Requests / Replicas metrics. Treat "
+                 "audit hits as the candidate list and confirm via "
+                 "the engine's metric refinement pass before action.",
+    },
 }
 
 
@@ -1020,7 +1285,13 @@ def write_policy_starter_pack(out_dir: Path,
 # Orchestration
 # ---------------------------------------------------------------------------
 
-def run(subs: list[str], out_dir: Path):
+def run(subs: list[str], out_dir: Path,
+        *,
+        asp_idle_days: int = ASP_IDLE_DAYS_DEFAULT,
+        asp_idle_cpu_p95_max: float = ASP_IDLE_CPU_P95_MAX_DEFAULT,
+        ca_idle_days: int = CA_IDLE_DAYS_DEFAULT,
+        ca_idle_requests_max: int = CA_IDLE_REQUESTS_MAX_DEFAULT,
+        skip_metrics: bool = False):
     out_dir.mkdir(parents=True, exist_ok=True)
     date = datetime.now(timezone.utc).strftime("%Y%m%d")
 
@@ -1044,7 +1315,8 @@ def run(subs: list[str], out_dir: Path):
                 sku=str(r.get("sku") or r.get("tier") or ""),
                 size_gb=int(r.get("sizeGb") or 0),
                 age_days=int(r.get("ageDays") or 0),
-                extra=str(r.get("power") or r.get("ruleCount") or ""),
+                extra=str(r.get("power") or r.get("ruleCount")
+                         or r.get("extra") or ""),
             )
             raw_findings.append(f)
 
@@ -1058,6 +1330,23 @@ def run(subs: list[str], out_dir: Path):
               "metrics (best-effort; missing metrics are kept and tagged)…",
               flush=True)
         raw_findings = refine_storage_findings(raw_findings)
+
+    # PaaS rightsizing (issue #4): refine ASP/CA candidates by metric
+    # evidence. Different posture from storage — a billed ASP with apps
+    # deployed isn't waste-suspect on its own, so missing metrics drops
+    # the candidate (or all of them if --skip-metrics is set).
+    paas_cats = {"idle_app_service_plan", "idle_container_app"}
+    if any(f.category in paas_cats for f in raw_findings):
+        print("[engine] Refining PaaS rightsizing candidates with "
+              "Azure Monitor metrics…", flush=True)
+        raw_findings = refine_paas_findings(
+            raw_findings,
+            asp_days=asp_idle_days,
+            asp_cpu_p95_max=asp_idle_cpu_p95_max,
+            ca_days=ca_idle_days,
+            ca_requests_max=ca_idle_requests_max,
+            skip_metrics=skip_metrics,
+        )
 
     # Enrich with actual £ from Cost Management (one query per sub,
     # short-circuited as soon as every flagged resource for that sub
@@ -1111,7 +1400,7 @@ def run(subs: list[str], out_dir: Path):
     print(f"  - {html_path}")
     print(f"  - {csv_path}")
     print(f"  - {tool_dir / 'policy'}/  (audit-mode policies for all "
-          f"7 classes)")
+          f"12 classes)")
     print(f"[engine] Total flagged: {len(raw_findings):,} resources, "
           f"~£{total_monthly:,.0f}/mo (~£{total_monthly * 12:,.0f}/yr).")
 
@@ -1168,9 +1457,38 @@ def main():
                     help="Include subscriptions whose state is not "
                          "Enabled (default: skip them).")
     ap.add_argument("--out-dir", required=True, help="Output directory.")
+    ap.add_argument("--asp-idle-cpu-p95-max", type=float,
+                    default=ASP_IDLE_CPU_P95_MAX_DEFAULT,
+                    help="App Service Plan: P95 CpuPercentage threshold "
+                         "(%%) below which a non-empty plan is flagged as "
+                         "under-utilised. Default: 5.0.")
+    ap.add_argument("--asp-idle-days", type=int,
+                    default=ASP_IDLE_DAYS_DEFAULT,
+                    help="App Service Plan observation window (days). "
+                         "Default: 14.")
+    ap.add_argument("--ca-idle-requests-max", type=int,
+                    default=CA_IDLE_REQUESTS_MAX_DEFAULT,
+                    help="Container Apps: total Requests over the "
+                         "observation window at or below this number is "
+                         "considered idle. Default: 0.")
+    ap.add_argument("--ca-idle-days", type=int,
+                    default=CA_IDLE_DAYS_DEFAULT,
+                    help="Container Apps observation window (days). "
+                         "Default: 14.")
+    ap.add_argument("--skip-metrics", action="store_true",
+                    help="Skip Azure Monitor metric calls for metric-"
+                         "dependent PaaS rightsizing checks; those "
+                         "candidates are dropped because they can't be "
+                         "qualified without metrics. Storage refinement "
+                         "may still query Azure Monitor metrics.")
     args = ap.parse_args()
     subs = _resolve_subs(args)
-    run(subs, Path(args.out_dir))
+    run(subs, Path(args.out_dir),
+        asp_idle_days=args.asp_idle_days,
+        asp_idle_cpu_p95_max=args.asp_idle_cpu_p95_max,
+        ca_idle_days=args.ca_idle_days,
+        ca_idle_requests_max=args.ca_idle_requests_max,
+        skip_metrics=args.skip_metrics)
 
 
 if __name__ == "__main__":
