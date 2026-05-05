@@ -5,7 +5,7 @@
     {
       "type": 1,
       "content": {
-        "json": "# FinOps Engine — Peak-Aware Rightsizing\n\nWorkload-aware (P95 / P99) rightsizing dashboard for the FinOps team. Replaces Azure Advisor's average-based logic for spiky / batch workloads. Source: `rightsizing-peak` engine."
+        "json": "# FinOps Engine — Peak-Aware Rightsizing\n\nWorkload-aware (P95 / P99) rightsizing dashboard for the FinOps team. Longer-window, per-hour-true-peak companion to Azure Advisor's resize logic for spiky / batch / month-end workloads where Advisor's 7-day default window or 30-min bucket aggregation hides the peak. Source: `rightsizing-peak` engine."
       },
       "name": "title"
     },

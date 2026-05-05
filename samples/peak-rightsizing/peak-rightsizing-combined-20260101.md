@@ -29,9 +29,13 @@ The unsafe Advisor recommendation in this run:
 |-------------------------------|--------------------|------------------|--------:|--------:|
 | `vm-batch-night-04`           | Resize → D4s_v5    | UPSIZE_WARNING   |    91 % |    78 % |
 
-The VM looks idle on Advisor's average (which is dragged down by 22 hours
-per day of zero load) but saturates CPU during a 02:00–04:00 batch window.
-Resizing it down per Advisor would have caused the batch SLA to slip.
+The VM looks idle on Advisor's default 7-day window with 30-min buckets
+(the night-batch window only contributes a handful of buckets, and
+Advisor's bucketing is the *max of 1-minute averages* rather than a
+true peak — the 02:00–04:00 saturation is smoothed by 22 hours of
+near-zero load on either side). The 30-day per-hour-`Maximum` view
+this engine uses keeps every saturated batch hour visible in the P95.
+Resizing this VM down per Advisor would have caused the batch SLA to slip.
 
 ## Per-subscription reports
 

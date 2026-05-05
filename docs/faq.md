@@ -110,7 +110,15 @@ engines' CSV output is easy to ingest into the toolkit's Power BI models.
 
 Advisor is a great starting point. It misses:
 
-- **Peak-aware rightsizing** (Advisor uses averages).
+- **Longer-window, per-hour-true-peak rightsizing.** Advisor already
+  uses P95 / P99 (not averages — a common misconception driven by the
+  portal's *average CPU utilization* display filter), but on a 7-day
+  default window with 30-min buckets taken as the max of 1-minute
+  averages. `rightsizing-peak` uses 30 days and per-hour `Maximum` CPU
+  / `Minimum` `Available Memory Bytes` buckets, which catches weekly,
+  month-end, and sub-30-minute peaks the 7-day / 30-min view smooths
+  over. See
+  [`tools/rightsizing-peak/README.md`](../tools/rightsizing-peak/README.md#why-peak-aware-matters--and-where-advisor-falls-short).
 - **Old snapshots, empty App Service Plans, idle Standard LBs,
   stopped-not-deallocated VMs** as priced findings.
 - **A coverage-gap-with-buffer-guardrail** approach to RI/SP commits.

@@ -177,7 +177,7 @@ def slide_title(prs):
 
     add_text(s, Inches(1.0), Inches(4.4),
              Inches(11.5), Inches(0.6),
-             "Replace Advisor's averages.  Find the waste it can't price.  "
+             "Beat Advisor's 7-day window.  Find the waste it can't price.  "
              "Own the buffer.",
              size=20, color=AMBER)
 
@@ -205,7 +205,8 @@ def slide_problem(prs):
 
     add_card(s, Inches(0.5), Inches(1.7), Inches(4.0), Inches(4.6),
              "Azure Advisor",
-             ["Uses averages — unsafe on bursty / batch workloads.",
+             ["7-day default window + 30-min max-of-avg buckets miss "
+              "weekly / month-end / sub-30-min peaks.",
               "Ignores orphan waste (snapshots, empty plans, idle LBs).",
               "No owner routing. Findings die in a portal tab.",
               "No buffer-aware RI guidance."],
@@ -241,7 +242,8 @@ def slide_answer(prs):
 
     cards = [
         ("rightsizing-peak",
-         ["P95 / P99 instead of averages.",
+         ["30-day window + per-hour true-peak P95 / P99 "
+          "(vs Advisor's 7-day / 30-min max-of-avg).",
           "Flags Advisor's unsafe downsizes.",
           "Tunable thresholds per run."],
          TEAL),
@@ -322,9 +324,10 @@ def slide_rightsizing(prs):
     slide_engine(
         prs,
         eyebrow="ENGINE 1 / 4",
-        title="rightsizing-peak — peak beats average, every time.",
-        lead="Replaces Advisor's average-based downsize logic with "
-             "P95 / P99 peak-aware decisions.",
+        title="rightsizing-peak — longer window, sharper peaks.",
+        lead="Advisor already uses P95/P99, but on a 7-day default "
+             "window with 30-min max-of-avg buckets. This engine uses "
+             "30 days + per-hour true peaks.",
         points=[
             "30 days of per-hour Max CPU + Min memory from Azure Monitor.",
             "Per-VM verdict: DOWNSIZE / KEEP / UPSIZE_WARNING / "
