@@ -188,7 +188,7 @@ fit) translate; the data sources don't.
 
 - `v0.2.0` — twelve `hidden-waste` categories (added under-utilised App
   Service Plans and idle Container Apps via Azure Monitor metric refinement;
-  see [#4](https://github.com/prbeegala/FinOpsEngine/issues/4)). Five new
+  see [#4](https://github.com/prbeegala/FinOpsEngine/issues/4). Five new
   CLI flags (`--asp-idle-cpu-p95-max`, `--asp-idle-days`,
   `--ca-idle-requests-max`, `--ca-idle-days`, `--skip-metrics`).
 - `v0.1.3` — fixture-driven test infrastructure (`tests/`, pyproject.toml
