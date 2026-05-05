@@ -10,6 +10,30 @@ as detailed in [`VERSIONING.md`](./VERSIONING.md).
 
 ### Added
 
+- **`hidden-waste`: dev/test auto-shutdown gap detector (issue
+  [#5](https://github.com/prbeegala/FinOpsEngine/issues/5)).** Three
+  new categories — `devtest_no_shutdown_vm`, `devtest_no_shutdown_sql`,
+  and `devtest_no_shutdown_aks` — flag non-production workloads
+  (`environment` / `env` tag in the canonical dev/test value list)
+  that bill 24×7 against a 12h × 5d target cadence. The VM detector
+  left-anti-joins against `microsoft.devtestlab/schedules`
+  (`ComputeVmShutdownTask`, `Enabled`) so VMs that already have a
+  shutdown schedule are excluded; it then verifies ≥95% hourly
+  Percentage CPU coverage over the last 14 days via Azure Monitor,
+  matching `rightsizing-peak`'s coverage methodology. SQL flags every
+  Azure SQL DB whose service tier isn't Serverless (`GP_S_*`) — the
+  only DTU/vCore tier that auto-pauses. AKS flags clusters in
+  `PowerState/Running` that could be paused via `az aks stop`. Savings
+  are computed as `monthly_bill × 108/168 ≈ 0.6429` (the wasted slice
+  vs the issue's explicit 12h × 5d target). New CLI flags
+  `--devtest-uptime-days` and `--devtest-uptime-threshold` tune the
+  evidence window. Tag-key tuples (`OWNER_KEYS`, `CRITICALITY_KEYS`,
+  `ENVIRONMENT_KEYS`, `COSTCENTRE_KEYS`, `APP_KEYS`,
+  `TAG_PLACEHOLDERS`) and the new `DEVTEST_ENV_VALUES` set are now
+  centralised in `tools/tag_keys.py`; `context-enricher` re-imports
+  them so the two engines can never disagree on what counts as
+  "dev/test".
+
 - **`rightsizing-peak`: upsize targets and SKU-family swap suggestions
   (issue [#9](https://github.com/prbeegala/FinOpsEngine/issues/9)).**
   The engine now emits an `UPSIZE` verdict (replacing the old
