@@ -31,13 +31,13 @@ Pick a scope. The engine requires **either** `--subs` (explicit list) **or**
 python ri_coverage.py `
   --subs "<id1>,<id2>,..." `
   --months 3 `
-  --refund-buffer-gbp 5000 `
+  --refund-buffer 5000 `
   --out-dir ./out/ri-coverage
 
 # Every enabled subscription in the current tenant
 python ri_coverage.py `
   --all-subs `
-  --refund-buffer-gbp 5000 `
+  --refund-buffer 5000 `
   --out-dir ./out/ri-coverage
 ```
 
@@ -53,6 +53,7 @@ python ri_coverage.py `
 | `--exclude-subs <a,b>` | When using `--all-subs`, skip these IDs/names. |
 | `--tenant <guid>` | Limit `--all-subs` to a single tenant. |
 | `--include-disabled` | Include subs whose state is not Enabled. |
+| `--currency-symbol <glyph>` | Override the auto-detected display currency (e.g. `$`, `€`, `kr`). Defaults to whatever `az billing account list` reports for the tenant, falling back to `£`. Affects display only — the underlying numbers come straight from Cost Management. |
 
 ## Outputs
 
@@ -63,25 +64,31 @@ python ri_coverage.py `
 
 ## The cancellation-exposure buffer
 
-The most important argument is `--refund-buffer-gbp`. It is the maximum
+The most important argument is `--refund-buffer`. It is the maximum
 amount of cancellation fee you are willing to incur if a commitment turns
-out badly. Microsoft currently charges a 12% cancellation fee on
-Reservations and Savings Plans (subject to change), so:
+out badly, expressed in your tenant's billing currency (auto-detected
+via `az billing account list` — see `--currency-symbol` to override).
+Microsoft currently charges a 12% cancellation fee on Reservations and
+Savings Plans (subject to change), so:
 
 ```
 Maximum committable annual spend ≈ buffer / 0.12
-e.g. £5,000 buffer ≈ £41,666 of safely-cancellable annual commit.
+e.g. 5,000 buffer ≈ 41,666 of safely-cancellable annual commit.
 ```
 
 This is intentionally a **business choice**, not a technical one. Setting
 the buffer too low caps your savings; setting it too high turns a forecast
 miss into a real refund cost. Common starting points:
 
-- **£5k** for a first-time customer with no commit history.
-- **£15k–£25k** for a tenant with > £1M annual VM spend and a
+- **5k** for a first-time customer with no commit history.
+- **15k–25k** for a tenant with substantial VM spend and a
   capacity-planning function.
-- **`--refund-buffer-gbp 0`** to suppress the buffer guardrail entirely
+- **`--refund-buffer 0`** to suppress the buffer guardrail entirely
   (the shortlist becomes "everything stable enough to commit").
+
+> **Deprecated**: `--refund-buffer-gbp` is still accepted as an alias
+> for `--refund-buffer` for one release so existing CI workflows keep
+> working; using it prints a deprecation warning. Update before v0.3.0.
 
 ## Limitations & assumptions
 

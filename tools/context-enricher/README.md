@@ -76,6 +76,17 @@ without the flag (or with `plan_only=false` from `workflow_dispatch`).
 Each body carries a `> ⚠️ DRY-RUN — --plan-only mode.` banner so
 operators can't accidentally treat a planned body as a published one.
 
+### Currency display
+
+By default the enricher renders amounts in the tenant's billing
+currency, auto-detected via `az billing account list` once at startup.
+Pass `--currency-symbol '$'` (or `'€'`, `'kr'`, etc.) to override —
+useful when running across tenants with mixed billing accounts or when
+the CLI doesn't return a currency. Detection failures fall back to
+`£` and print a one-line provenance message; numeric values are
+unchanged because Cost Management already returns amounts in the
+tenant's billing currency.
+
 ## Outputs
 
 - `enriched-<date>.csv` — every finding with owner / criticality / env /

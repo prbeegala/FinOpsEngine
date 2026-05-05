@@ -91,6 +91,7 @@ python hidden_waste.py `
 | `--ca-idle-requests-max <n>` | Container Apps: total `Requests` ≤ this counts as idle. Default `0`. |
 | `--ca-idle-days <n>` | Container Apps observation window in days. Default `14`. |
 | `--skip-metrics` | Skip Azure Monitor calls. PaaS rightsizing candidates are dropped (they can't be qualified without metrics); storage detectors fall back to their own posture. |
+| `--currency-symbol <glyph>` | Override the auto-detected display currency (e.g. `$`, `€`, `kr`). Defaults to whatever `az billing account list` reports for the tenant, falling back to `£`. Numeric values are unchanged — Cost Management already returns amounts in the tenant's billing currency. |
 
 ## Outputs
 

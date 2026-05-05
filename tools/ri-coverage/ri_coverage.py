@@ -25,7 +25,7 @@ Usage
     python ri_coverage.py \
         --subs <subId>[,<subId>...] \
         --months 3 \
-        --refund-buffer-gbp 5000 \
+        --refund-buffer 5000 \
         --out-dir ./out/ri-coverage
 
 Auth: relies on `az login`. Uses `az rest` to call Cost Management (avoids
@@ -54,6 +54,15 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from html_sink import write_html, write_index  # noqa: E402
+from finops_currency import detect_currency  # noqa: E402
+
+# ---------------------------------------------------------------------------
+# Display currency (overridden at run() time from CLI / billing-account auto-detect).
+# Defaults to GBP so existing fixtures / sample snapshots keep passing without
+# touching them.
+# ---------------------------------------------------------------------------
+CURRENCY: str = "£"
+CURRENCY_ISO: str = "GBP"
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -319,8 +328,9 @@ def score(g: Group) -> Recommendation:
         bits.append(f"⚠️  Family '{g.family}' is older-gen — verify "
                     "migration roadmap before committing 3Y.")
     if g.annual_payg < 5000:
-        bits.append("Annual PAYG burn under £5k — modest savings; consider "
-                    "rolling into a wider Compute SP rather than per-family RI.")
+        bits.append(f"Annual PAYG burn under {gbp(5000)} — modest savings; "
+                    "consider rolling into a wider Compute SP rather than "
+                    "per-family RI.")
 
     if cv < CV_MED and not deprecated:
         risk = "LOW"
@@ -366,8 +376,8 @@ def build_shortlist(recs, refund_buffer_gbp, min_savings_gbp: float = 50.0):
 
 def gbp(x: float) -> str:
     if abs(x) >= 1000:
-        return f"£{x:,.0f}"
-    return f"£{x:,.2f}"
+        return f"{CURRENCY}{x:,.0f}"
+    return f"{CURRENCY}{x:,.2f}"
 
 
 def write_coverage_csv(path: Path, recs):
@@ -415,7 +425,7 @@ def write_coverage_md(path: Path, recs, months: int, sub_count: int):
         f"- LOW-risk groups: **{by_risk['LOW']}** | "
         f"MEDIUM: **{by_risk['MEDIUM']}** | HIGH: **{by_risk['HIGH']}**",
         "",
-        "## Top 20 commitable groups (by annual PAYG £)",
+        "## Top 20 commitable groups (by annual PAYG)",
         "",
         "| Family | Region | Subs | Mo. PAYG | Yr PAYG | CV | Stability | "
         "Product | Yr commit | Yr savings | Risk |",
@@ -525,9 +535,23 @@ def write_shortlist_md(path: Path, shortlist, all_recs, buffer_gbp):
 # Orchestration
 # ---------------------------------------------------------------------------
 
-def run(subs, months, refund_buffer, out_dir: Path):
+def run(subs, months, refund_buffer, out_dir: Path, *,
+        currency_symbol: str | None = None):
     out_dir.mkdir(parents=True, exist_ok=True)
     date = datetime.now(timezone.utc).strftime("%Y%m%d")
+
+    global CURRENCY, CURRENCY_ISO
+    sym, iso, source = detect_currency(currency_symbol)
+    CURRENCY = sym
+    CURRENCY_ISO = iso or CURRENCY_ISO
+    src_label = {
+        "override": "from --currency-symbol",
+        "billing-account": "from `az billing account list`",
+        "default": "default — set --currency-symbol or grant Billing "
+                   "Reader to silence this",
+    }.get(source, source)
+    print(f"[engine] Display currency: {CURRENCY} "
+          f"({CURRENCY_ISO or '?'}) — {src_label}")
 
     print(f"[engine] Pulling {months}-month PAYG VM costs across "
           f"{len(subs)} sub(s)…")
@@ -548,7 +572,7 @@ def run(subs, months, refund_buffer, out_dir: Path):
     recs = [score(g) for g in groups.values() if g.annual_payg > 0]
     print(f"[engine] {len(recs)} family×region groups identified.")
     shortlist = build_shortlist(recs, refund_buffer)
-    print(f"[engine] Shortlist within £{refund_buffer:.0f} buffer: "
+    print(f"[engine] Shortlist within {gbp(refund_buffer)} buffer: "
           f"{len(shortlist)} recommendation(s).")
 
     coverage_csv  = out_dir / f"ri-coverage-{date}.csv"
@@ -574,7 +598,7 @@ def run(subs, months, refund_buffer, out_dir: Path):
     print(f"  - {shortlist_md}")
     print(f"  - {shortlist_html}")
     print(f"[engine] Modelled annual savings on shortlist: "
-          f"£{total_savings:,.0f}")
+          f"{gbp(total_savings)}")
 
 
 def main():
@@ -599,12 +623,46 @@ def main():
                          "Enabled (default: skip them).")
     ap.add_argument("--months", type=int, default=3,
                     help="Months of history to pull (default 3).")
-    ap.add_argument("--refund-buffer-gbp", type=float, default=5000.0,
-                    help="Cap on cumulative cancellation exposure (default 5000).")
+    # Buffer flag: prefer --refund-buffer (currency-agnostic). Keep
+    # --refund-buffer-gbp as a deprecated alias so existing CI workflows
+    # don't break in the same release that introduces auto-currency.
+    buffer_grp = ap.add_mutually_exclusive_group()
+    buffer_grp.add_argument(
+        "--refund-buffer", type=float, default=None, dest="refund_buffer",
+        help="Cap on cumulative cancellation exposure, in tenant billing "
+             "currency (default 5000).",
+    )
+    buffer_grp.add_argument(
+        "--refund-buffer-gbp", type=float, default=None,
+        dest="refund_buffer_gbp",
+        help="DEPRECATED alias for --refund-buffer; kept for backwards "
+             "compatibility with existing automation.",
+    )
+    ap.add_argument(
+        "--currency-symbol", type=str, default=None,
+        help="Override the auto-detected display currency glyph (e.g. "
+             "'$', '€', 'kr'). When omitted, the engine calls "
+             "`az billing account list` once to read the tenant's "
+             "billing currency and falls back to '£' on any failure.",
+    )
     ap.add_argument("--out-dir", required=True, help="Output directory.")
     args = ap.parse_args()
+    if args.refund_buffer is not None and args.refund_buffer_gbp is not None:
+        ap.error("--refund-buffer and --refund-buffer-gbp are mutually exclusive; "
+                 "use --refund-buffer.")
+    if args.refund_buffer_gbp is not None:
+        print("[engine] WARNING: --refund-buffer-gbp is deprecated; "
+              "use --refund-buffer.", file=sys.stderr)
+    refund_buffer = (
+        args.refund_buffer
+        if args.refund_buffer is not None
+        else args.refund_buffer_gbp
+        if args.refund_buffer_gbp is not None
+        else 5000.0
+    )
     subs = _resolve_subs(args)
-    run(subs, args.months, args.refund_buffer_gbp, Path(args.out_dir))
+    run(subs, args.months, refund_buffer, Path(args.out_dir),
+        currency_symbol=args.currency_symbol)
 
 
 def _resolve_subs(args) -> list[str]:

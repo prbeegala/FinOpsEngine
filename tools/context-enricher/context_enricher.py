@@ -50,6 +50,14 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from html_sink import write_html, write_index  # noqa: E402
+from finops_currency import detect_currency  # noqa: E402
+
+# ---------------------------------------------------------------------------
+# Display currency (overridden in main() from CLI / billing-account auto-detect).
+# Defaults to GBP so existing fixtures / sample snapshots keep passing.
+# ---------------------------------------------------------------------------
+CURRENCY: str = "£"
+CURRENCY_ISO: str = "GBP"
 
 # ---------------------------------------------------------------------------
 # Tag conventions — case-insensitive lookup, first match wins.
@@ -270,7 +278,8 @@ def classify(f: Finding) -> None:
     if has_owner and (has_crit or has_env) and f.monthly_gbp >= HIGH_GBP_FLOOR:
         f.confidence = "HIGH"
         f.rationale = ("Owner + criticality/environment context present and "
-                       f"value (£{f.monthly_gbp:.0f}/mo) clears the auto-issue floor.")
+                       f"value ({CURRENCY}{f.monthly_gbp:.0f}/mo) clears the "
+                       "auto-issue floor.")
     elif (has_owner or has_crit) and f.monthly_gbp >= MED_GBP_FLOOR:
         f.confidence = "MED"
         bits = []
@@ -284,8 +293,8 @@ def classify(f: Finding) -> None:
             f.rationale = ("Untagged — belongs in the tagging-debt backlog, "
                            "not the remediation queue.")
         else:
-            f.rationale = (f"Below £{MED_GBP_FLOOR:.0f}/mo threshold — bulk-handle "
-                           "in next quarterly clean-up.")
+            f.rationale = (f"Below {CURRENCY}{MED_GBP_FLOOR:.0f}/mo threshold "
+                           "— bulk-handle in next quarterly clean-up.")
 
 
 # ---------------------------------------------------------------------------
@@ -334,49 +343,49 @@ def write_summary_md(path: Path, findings: list[Finding]) -> None:
     L.append("")
     L.append("## Confidence breakdown")
     L.append("")
-    L.append("| Band | Count | Monthly £ | Routing |")
+    L.append("| Band | Count | Monthly cost | Routing |")
     L.append("|---|---:|---:|---|")
     L.append(f"| HIGH (auto-issue ready) | {len(by_conf['HIGH'])} | "
-             f"£{auto_monthly:,.0f} | Domain owner GitHub Issue |")
+             f"{CURRENCY}{auto_monthly:,.0f} | Domain owner GitHub Issue |")
     L.append(f"| MED  (review first) | {len(by_conf['MED'])} | "
-             f"£{review_monthly:,.0f} | FinOps weekly triage |")
-    L.append(f"| LOW  (tagging debt / sub-£25) | {len(by_conf['LOW'])} | "
-             f"£{debt_monthly:,.0f} | Platform-team backlog |")
-    L.append(f"| **Total** | **{len(findings)}** | **£{total_monthly:,.0f}** | |")
+             f"{CURRENCY}{review_monthly:,.0f} | FinOps weekly triage |")
+    L.append(f"| LOW  (tagging debt / sub-{CURRENCY}25) | {len(by_conf['LOW'])} | "
+             f"{CURRENCY}{debt_monthly:,.0f} | Platform-team backlog |")
+    L.append(f"| **Total** | **{len(findings)}** | **{CURRENCY}{total_monthly:,.0f}** | |")
     L.append("")
     L.append("## Auto-issue queue by owner")
     L.append("")
     if not by_owner:
         L.append("_No HIGH/MED findings._")
     else:
-        L.append("| Owner | Count | Monthly £ | Bundle |")
+        L.append("| Owner | Count | Monthly cost | Bundle |")
         L.append("|---|---:|---:|---|")
         for owner in sorted(by_owner.keys(),
                             key=lambda k: -sum(f.monthly_gbp for f in by_owner[k])):
             items = by_owner[owner]
             mo = sum(f.monthly_gbp for f in items)
-            L.append(f"| {owner} | {len(items)} | £{mo:,.0f} | "
+            L.append(f"| {owner} | {len(items)} | {CURRENCY}{mo:,.0f} | "
                      f"`issues/{slug(owner)}.md` |")
     L.append("")
     L.append("## Top 25 individual findings")
     L.append("")
-    L.append("| Owner | Sub | Resource | Category | Confidence | £/mo |")
+    L.append("| Owner | Sub | Resource | Category | Confidence | Cost/mo |")
     L.append("|---|---|---|---|---|---:|")
     for f in sorted(findings, key=lambda x: -x.monthly_gbp)[:25]:
         L.append(f"| {f.owner or '_(untagged)_'} | {f.sub_name} | {f.name} | "
-                 f"{f.category} | {f.confidence} | £{f.monthly_gbp:,.0f} |")
+                 f"{f.category} | {f.confidence} | {CURRENCY}{f.monthly_gbp:,.0f} |")
     L.append("")
-    L.append("## Tagging debt (top 10 LOW by £)")
+    L.append("## Tagging debt (top 10 LOW by spend)")
     L.append("")
     debt_top = sorted(by_conf["LOW"], key=lambda x: -x.monthly_gbp)[:10]
     if not debt_top:
         L.append("_None — every finding has at least owner or criticality._")
     else:
-        L.append("| Sub | Resource | Category | £/mo |")
+        L.append("| Sub | Resource | Category | Cost/mo |")
         L.append("|---|---|---|---:|")
         for f in debt_top:
             L.append(f"| {f.sub_name} | {f.name} | {f.category} | "
-                     f"£{f.monthly_gbp:,.0f} |")
+                     f"{CURRENCY}{f.monthly_gbp:,.0f} |")
     L.append("")
     L.append("---")
     L.append("")
@@ -400,8 +409,8 @@ def write_owner_issue(path: Path, owner: str, items: list[Finding],
         L.append("")
     L.append(f"## FinOps remediation queue — {owner or 'Unowned'}")
     L.append("")
-    L.append(f"**{len(items)} findings · ~£{monthly:,.0f} / month "
-             f"(£{annual:,.0f} / yr) recoverable.**")
+    L.append(f"**{len(items)} findings · ~{CURRENCY}{monthly:,.0f} / month "
+             f"({CURRENCY}{annual:,.0f} / yr) recoverable.**")
     L.append("")
     L.append("> Generated by the FinOps Engine automation. Each row links back "
              "to the engine that surfaced it; deletion / rightsizing remains "
@@ -409,12 +418,12 @@ def write_owner_issue(path: Path, owner: str, items: list[Finding],
              "`reject` per row to update the tracker.")
     L.append("")
     L.append("| # | Resource | Category | Confidence | Criticality | "
-             "Environment | £/mo |")
+             "Environment | Cost/mo |")
     L.append("|---:|---|---|---|---|---|---:|")
     for i, f in enumerate(items, 1):
         L.append(f"| {i} | `{f.name}` ({f.sub_name}/{f.resource_group}) | "
                  f"{f.category} | {f.confidence} | {f.criticality or '—'} | "
-                 f"{f.environment or '—'} | £{f.monthly_gbp:,.0f} |")
+                 f"{f.environment or '—'} | {CURRENCY}{f.monthly_gbp:,.0f} |")
     L.append("")
     L.append("### Source data")
     L.append("")
@@ -433,7 +442,7 @@ def write_owner_issue(path: Path, owner: str, items: list[Finding],
     L.append("")
     L.append("### Suggested next step")
     L.append("")
-    L.append("1. Eyeball the top 3 by £ — these are 80% of the spend.")
+    L.append("1. Eyeball the top 3 by spend — these are 80% of the spend.")
     L.append("2. For HIGH-confidence rows, raise a change ticket against the "
              "named resource group.")
     L.append("3. For MED rows, confirm criticality / environment with the "
@@ -554,7 +563,7 @@ def run(hidden_waste_csv: Path | None,
     med  = sum(1 for f in findings if f.confidence == "MED")
     low  = sum(1 for f in findings if f.confidence == "LOW")
     high_gbp = sum(f.monthly_gbp for f in findings if f.confidence == "HIGH")
-    print(f"[enricher] Confidence: HIGH={high} (£{high_gbp:,.0f}/mo), "
+    print(f"[enricher] Confidence: HIGH={high} ({CURRENCY}{high_gbp:,.0f}/mo), "
           f"MED={med}, LOW={low}.")
 
 
@@ -575,9 +584,28 @@ def main():
             "the flag off."
         ),
     )
+    ap.add_argument(
+        "--currency-symbol", type=str, default=None,
+        help="Override the auto-detected display currency glyph (e.g. "
+             "'$', '€', 'kr'). When omitted, the engine calls "
+             "`az billing account list` once to read the tenant's "
+             "billing currency and falls back to '£' on any failure.",
+    )
     args = ap.parse_args()
     if not args.hidden_waste_csv and not args.rightsizing_csv:
         ap.error("Provide at least one of --hidden-waste-csv / --rightsizing-csv.")
+    global CURRENCY, CURRENCY_ISO
+    sym, iso, source = detect_currency(args.currency_symbol)
+    CURRENCY = sym
+    CURRENCY_ISO = iso or CURRENCY_ISO
+    src_label = {
+        "override": "from --currency-symbol",
+        "billing-account": "from `az billing account list`",
+        "default": "default — set --currency-symbol or grant Billing "
+                   "Reader to silence this",
+    }.get(source, source)
+    print(f"[enricher] Display currency: {CURRENCY} "
+          f"({CURRENCY_ISO or '?'}) — {src_label}")
     run(args.hidden_waste_csv, args.rightsizing_csv, args.out_dir,
         plan_only=args.plan_only)
 

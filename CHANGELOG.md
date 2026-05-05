@@ -10,6 +10,33 @@ as detailed in [`VERSIONING.md`](./VERSIONING.md).
 
 ### Added
 
+- **Currency auto-detect across all engines (issue [#14](https://github.com/prbeegala/FinOpsEngine/issues/14)).**
+  `hidden-waste`, `ri-coverage`, and `context-enricher` now call
+  `az billing account list` once at startup, read the tenant's billing
+  currency, and render headlines / tables / per-owner Issue bodies in
+  the matching glyph (USD `$`, EUR `€`, SEK `kr`, JPY `¥`, etc. — 18
+  ISO-4217 codes mapped, unknown codes fall back to the raw ISO).
+  A new `--currency-symbol` flag overrides detection (accepts any
+  string, including multi-character glyphs like `kr` / `A$`). When
+  detection fails (no Billing Reader, offline run, malformed
+  response), engines silently fall back to the historical `£` default
+  and print a one-line provenance message at startup. Numeric values
+  are unchanged — Cost Management already returns amounts in the
+  tenant billing currency. Shared helper lives at
+  `tools/finops_currency.py` (covered by 18 unit tests).
+  `rightsizing-peak` was unaffected (it doesn't print money).
+
+### Changed
+
+- **`ri-coverage`: `--refund-buffer-gbp` renamed to `--refund-buffer`.**
+  The old GBP-suffixed flag remains as a deprecated alias for one
+  release so existing automation (`automation/finops-nightly.yml`,
+  custom CI) keeps working — invoking it prints a deprecation warning
+  to stderr but otherwise behaves identically. Update your wrappers
+  before the v0.3.0 release, when the alias will be removed.
+
+### Added
+
 - **`context-enricher`: `--plan-only` dry-run mode (issue [#21](https://github.com/prbeegala/FinOpsEngine/issues/21)).**
   When the flag is set, per-owner Issue bodies are written to
   `<out-dir>/issues-planned/` instead of `<out-dir>/issues/` and each
