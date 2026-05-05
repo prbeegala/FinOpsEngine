@@ -40,7 +40,7 @@ fallback for resources the bill has never seen.
 |---|---|---|
 | **`hidden-waste`** | Cost Management `ActualCost`, last 30 days, grouped by `ResourceId`. | Each row is tagged with a **cost source**: `cost_mgmt` (real billed £), `estimate` (list-price fallback for never-attached disks), `unknown` (no attribution — flagged for manual review). |
 | **`ri-coverage`** | Cost Management `ActualCost`, last N months, filtered to `MeterCategory = Virtual Machines` and `PricingModel = OnDemand`. | RI / Savings Plan discount %s come from public Microsoft commitment tables (1Y/3Y × RI/SP) and are applied on top of your real PAYG run-rate. Microsoft does not expose your *negotiated* RI/SP rate via API, so this is unavoidable. |
-| **`rightsizing-peak`** | Does not compute £ savings itself. | Produces verdicts (DOWNSIZE / KEEP / UPSIZE_WARNING / INSUFFICIENT_DATA). Where £ savings appear in the diff against Advisor, the figure is **Advisor's own modeled annual savings** (Advisor uses retail list price). Pair with `hidden-waste` via `context-enricher` for a verdict + actual-bill view per VM. |
+| **`rightsizing-peak`** | Does not compute £ savings itself. | Produces verdicts (DOWNSIZE / KEEP / UPSIZE / INSUFFICIENT_DATA). Where £ savings appear in the diff against Advisor, the figure is **Advisor's own modeled annual savings** (Advisor uses retail list price). Pair with `hidden-waste` via `context-enricher` for a verdict + actual-bill view per VM. |
 
 In practice this means EA / MCA discounts, regional pricing, Hybrid Benefit,
 dev/test rates and any private negotiated pricing are **already baked in**

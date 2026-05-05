@@ -1,0 +1,20 @@
+{
+  "_doc": "Dv3 SKU at moderate utilization → KEEP verdict but recommended_sku populated with Dasv5 modernization swap.",
+  "vm": {
+    "subscription_id": "00000000-0000-0000-0000-000000000001",
+    "resource_group": "rg-test",
+    "name": "vm-old-family",
+    "resource_id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-test/providers/Microsoft.Compute/virtualMachines/vm-old-family",
+    "vm_size": "Standard_D4_v3",
+    "location": "uksouth",
+    "power_state": "VM running"
+  },
+  "samples": 168,
+  "cpu_avg": 50.0,
+  "cpu_max": 65.0,
+  "mem_used_pct": 60.0,
+  "expected_verdict": "KEEP",
+  "expected_confidence": "HIGH",
+  "expected_target_sku": "",
+  "expected_recommended_sku": "Standard_D4as_v5"
+}
