@@ -404,12 +404,12 @@ def refine_storage_findings(raw: list["Finding"]) -> list["Finding"]:
                                                metric="UsedCapacity",
                                                aggregation="Average",
                                                days=30)
-            if tx is None and used_bytes is None:
+            if tx is None or used_bytes is None:
                 f.extra = "metrics unavailable; verify manually"
                 kept.append(f)
                 continue
-            tx_val = tx if tx is not None else 0.0
-            used_gib = ((used_bytes or 0.0) / (1024 ** 3))
+            tx_val = tx
+            used_gib = (used_bytes / (1024 ** 3))
             if (tx_val < STORAGE_COLD_TIER_MAX_TX_30D
                     and used_gib >= STORAGE_COLD_TIER_MIN_USED_GIB):
                 f.size_gb = int(used_gib)
