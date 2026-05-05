@@ -1,9 +1,25 @@
 # rightsizing-peak
 
-Peak-aware (P95 / P99) VM rightsizing engine. A safe replacement for Azure
-Advisor's average-based "Cost — Resize Virtual Machine" recommendations,
-appropriate for spiky / batch / retail workloads where Advisor's averages
-hide the peak that justifies the current SKU.
+Peak-aware (P95 / P99) VM rightsizing engine. A safer companion to Azure
+Advisor's "Cost — Resize Virtual Machine" recommendations for spiky /
+batch / retail / month-end workloads where Advisor's default 7-day
+lookback and 30-min bucketed aggregation hide the peak that justifies
+the current SKU.
+
+> **Common misconception:** Advisor does **not** use simple averages. Per
+> [Microsoft Learn][advisor-resize] its resize algorithm uses **P95 of
+> CPU and Outbound Network** and **P99 of Memory** on a 7-day default
+> window, with samples bucketed into 30-minute intervals taken as the
+> *max of 1-minute averages*. The headline value of `rightsizing-peak`
+> is therefore **not** "P95 vs averages" — it is **(a)** a 30-day
+> default window that catches weekly / month-end peaks Advisor's 7-day
+> window misses, **(b)** per-hour true `Maximum` CPU and per-hour
+> `Minimum` `Available Memory Bytes` (a stricter bucketing than
+> Advisor's max-of-1-min-averages), **(c)** explicit exclusion of
+> AKS / Databricks-managed VMs, and **(d)** a deterministic Advisor-diff
+> that flags any of Advisor's downsizes this engine would deem unsafe.
+
+[advisor-resize]: https://learn.microsoft.com/azure/advisor/advisor-cost-recommendations#resize-sku-recommendations
 
 ## What it does
 
@@ -165,25 +181,52 @@ defers the choice to the human reviewer. Adding ladder entries is the
 recommended way to expand the engine's coverage; heuristic-derived targets
 are deliberately not generated.
 
-## Why peak-aware matters
+## Why peak-aware matters — and where Advisor falls short
 
-Advisor's "Cost — Resize" recommendation is derived from the *average* CPU
-over its observation window. For a steady-state workload that is fine. For:
+Advisor's resize algorithm already uses percentiles, **not** averages. The
+documented thresholds (per [Microsoft Learn][advisor-resize]) are:
 
-- **Retail batch jobs** that idle 90% of the day and saturate at 02:00,
-- **CI runners** that burst during the working day,
-- **Reporting / ETL** that hit one peak per month,
+| Workload class | CPU & Outbound Network | Memory |
+|---|---|---|
+| User-facing | **P95 ≤ 40 %** on the new SKU | **P99 ≤ 60 %** on the new SKU |
+| Non-user-facing | P95 ≤ 80 % | P99 ≤ 80 % |
 
-…the *average* is structurally below 40% but the *peak* is at 100%. Following
-Advisor's recommendation in those cases causes a missed peak — a pager event
-that has nothing to do with the change reviewer realising they bought 12
-months of pain to save £40 / month.
+`rightsizing-peak` uses similar P95 / P99 thresholds. The genuine, defensible
+deltas are **window length** and **bucket aggregation**:
+
+| Dimension | Azure Advisor | `rightsizing-peak` |
+|---|---|---|
+| Default lookback | **7 days** (configurable 7 / 14 / 21 / 30 / 60 / 90) | **30 days** (configurable via `--days`) |
+| CPU sampling | every 30 s → 1-min avg → 30-min bucket = **max of 1-min averages** | every 30 s → 1-min avg → 1-hour bucket = **true `Maximum`** |
+| Memory sampling | same 30-min max-of-1-min-averages bucketing | 1-hour `Minimum` of `Available Memory Bytes` (worst-case headroom) |
+| Excludes managed VMs (AKS / Databricks) | No | Yes |
+| Cross-checks Advisor recs as a sanity layer | n/a | Yes — emits `advisor_unsafe = true` |
+
+The portal *VM/VMSS right-sizing* configuration page lets operators filter
+recommendations by an *average CPU utilization* threshold, but that is a
+**display filter**, not the generation algorithm — a common source of the
+"Advisor uses averages" misconception.
+
+Where this matters in practice:
+
+- **Retail batch jobs** that idle 90 % of the day and saturate at 02:00.
+  A 7-day window that happens to omit two of those nights still produces a
+  P95 below 40 %.
+- **Month-end finance / reporting / ETL** workloads that peak once every
+  28–31 days. By definition, a 7-day window will see the peak in at most
+  one run out of four.
+- **CI runners and weekly batch jobs** whose peak weekday isn't always in
+  the 7-day window.
+
+The 30-day default catches these. The per-hour true-peak aggregation
+catches sub-30-minute spikes that Advisor's 30-min max-of-averages
+smooths over.
 
 The engine's headline number — *Advisor recs that would have been unsafe* —
 is therefore the metric that matters most when introducing this tool to a
-new team. Expect 1–5% of Advisor's "downsize" recommendations to be unsafe
-in any given tenant; the cost of one unsafe change typically dwarfs years
-of savings from the safe ones.
+new team. Expect 1–5 % of Advisor's downsize recommendations to be unsafe
+on a longer window in any given tenant; the cost of one unsafe change
+typically dwarfs years of savings from the safe ones.
 
 ## Limitations & assumptions
 

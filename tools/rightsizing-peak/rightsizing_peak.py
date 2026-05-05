@@ -2,8 +2,16 @@
 """
 rightsizing-peak — Peak-aware VM rightsizing engine.
 
-Replaces Azure Advisor's average-based rightsizing logic with a P95/P99
-peak-aware decision tree, suitable for spiky retail and batch workloads.
+A longer-window, per-hour-true-peak companion to Azure Advisor's
+"Cost — Resize Virtual Machine" recommendations.
+
+Advisor already uses P95/P99 (see Microsoft Learn:
+advisor-cost-recommendations#resize-sku-recommendations) but on a 7-day
+default window with 30-min buckets taken as the max of 1-minute averages.
+This engine uses a 30-day default window with per-hour `Maximum` CPU and
+per-hour `Minimum` available-memory bucketing, and is suitable for spiky
+retail, batch, CI, and month-end workloads where Advisor's shorter window
+or coarser bucketing can hide a peak that justifies the current SKU.
 
 WHAT IT DOES
 ------------
