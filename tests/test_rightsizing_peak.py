@@ -56,7 +56,8 @@ def test_analyse_vm_matches_expected(rightsizing_peak, fixture_path):
     cpu_max = _expand(spec["cpu_max"], samples, "cpu_max")
     mem_used = _expand(spec["mem_used_pct"], samples, "mem_used_pct")
 
-    # Stable SKU catalogue — covers all SKUs referenced by fixtures.
+    # Stable SKU catalogue — only needs to cover fixture input ``vm_size``
+    # values used here to compute total memory bytes for the fake metrics.
     sku_cat = {
         "Standard_D4ds_v5": rp.SkuCapacity(vcpus=4, memory_gb=16.0),
         "Standard_D2ds_v5": rp.SkuCapacity(vcpus=2, memory_gb=8.0),
