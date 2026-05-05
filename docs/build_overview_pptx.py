@@ -330,7 +330,7 @@ def slide_rightsizing(prs):
              "30 days + per-hour true peaks.",
         points=[
             "30 days of per-hour Max CPU + Min memory from Azure Monitor.",
-            "Per-VM verdict: DOWNSIZE / KEEP / UPSIZE_WARNING / "
+            "Per-VM verdict: DOWNSIZE / KEEP / UPSIZE / "
             "INSUFFICIENT_DATA.",
             "Cross-checks Advisor and flags any of its downsizes the "
             "engine deems unsafe.",

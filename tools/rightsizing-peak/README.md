@@ -33,13 +33,18 @@ For every non-managed VM in the target subscription(s):
 3. Applies a deterministic decision tree:
    - `DOWNSIZE_CANDIDATE` if P95 CPU < 40% AND P95 mem-used < 50%.
      `HIGH` confidence when P99 is also low; `MEDIUM` otherwise.
-   - `UPSIZE_WARNING` if P95 CPU ≥ 80% OR P95 mem-used ≥ 85%.
+   - `UPSIZE` if P95 CPU ≥ 80% OR P95 mem-used ≥ 85% — emits a target
+     SKU one step up the same family/generation when an `UPSIZE_LADDER`
+     entry exists, blank for manual review otherwise.
    - `INSUFFICIENT_DATA` if metric coverage < 80% of the window.
    - `KEEP` otherwise.
-4. **Diffs against Azure Advisor**: every Advisor "Cost — Resize VM"
-   recommendation where this engine emits `UPSIZE_WARNING` or `KEEP` is
+4. **SKU-family swap** suggestions (independent of the up/downsize verdict):
+   modernization opportunities written to a `recommended_sku` column —
+   typically 10–20% saving at equal-or-better performance.
+5. **Diffs against Azure Advisor**: every Advisor "Cost — Resize VM"
+   recommendation where this engine emits `UPSIZE` or `KEEP` is
    flagged `advisor_unsafe = true`. *This is the headline metric.*
-5. Emits per-subscription Markdown + CSV reports plus a combined roll-up.
+6. Emits per-subscription Markdown + CSV reports plus a combined roll-up.
 
 ## Excluded by design
 
@@ -92,7 +97,8 @@ engine).
 ## Outputs
 
 - `<sub>-peak-rightsizing-<date>.csv` — one row per VM with all metrics +
-  decision + confidence + proposed_size + advisor_unsafe.
+  decision + confidence + `target_sku` (same-family up/downsize) +
+  `recommended_sku` (modernization swap) + `advisor_unsafe`.
 - `<sub>-peak-rightsizing-<date>.md` — human-readable per-sub summary.
 - `peak-rightsizing-combined-<date>.md` — roll-up table + headline number.
 
@@ -174,12 +180,51 @@ count is the threshold or the workload.
 
 ### Adding new SKU families
 
-The `DOWNSIZE_LADDER` map (also in the source file) is the *only* place an
-explicit target SKU is proposed. If the current size has no entry there, the
-engine still emits `DOWNSIZE_CANDIDATE` — but leaves `target_sku` blank and
-defers the choice to the human reviewer. Adding ladder entries is the
-recommended way to expand the engine's coverage; heuristic-derived targets
-are deliberately not generated.
+Three lookup tables in `rightsizing_peak.py` drive SKU recommendations:
+
+- `DOWNSIZE_LADDER` — proposes one step smaller in the same family/generation
+  for `DOWNSIZE_CANDIDATE` verdicts.
+- `UPSIZE_LADDER` — mirror of `DOWNSIZE_LADDER`, used to populate
+  `target_sku` on `UPSIZE` verdicts.
+- `SKU_FAMILY_SWAP` and `LOW_DUTY_B_SWAP` — populate the
+  `recommended_sku` column independently of the verdict (see below).
+
+If the current size has no entry in the relevant ladder the engine still
+emits the verdict — but leaves `target_sku` blank and defers the choice
+to the human reviewer. Adding ladder entries is the recommended way to
+expand coverage; heuristic-derived targets are deliberately not generated.
+
+### SKU-family swap (`recommended_sku` column)
+
+In addition to the same-family up/downsize ladders, the engine emits a
+`recommended_sku` column with modernization suggestions independent of
+the verdict. Typical savings are 10–20% at equal-or-better performance.
+
+| From (older / Intel) | To (modern / AMD) | Why |
+|---|---|---|
+| `Standard_D{2,4,8,16}_v3` / `_v4` / `s_v3` | `Standard_D{N}as_v5` | Dasv5 (AMD EPYC, premium SSD) is consistently cheaper than Dv3/Dsv3/Dv4 at matching vCPU/memory. |
+| `Standard_DS{2,3,4,5}_v2` | `Standard_D{2,4,8,16}as_v5` | DSv2 is older Intel; Dasv5 saves ~15-20% at matching shape. |
+| `Standard_E{2,4,8,16}_v3` / `s_v3` | `Standard_E{N}as_v5` | Easv5 is the AMD memory-optimized equivalent. |
+
+For low-duty-cycle workloads (P95 CPU < 15% **and** verdict =
+`DOWNSIZE_CANDIDATE`), the engine instead recommends a B-series swap at
+matching capacity:
+
+| From | To |
+|---|---|
+| `Standard_D2*_v{3,5}` / `Standard_DS2_v2` | `Standard_B2ms` |
+| `Standard_D4*_v{3,5}` / `Standard_DS3_v2` | `Standard_B4ms` |
+| `Standard_D8*_v{3,5}` / `Standard_DS4_v2` | `Standard_B8ms` |
+
+B-series accumulates CPU credits during idle periods and bursts above its
+baseline when needed — strictly cheaper than a same-shape D/E SKU when
+the duty cycle is low. Confirm the workload's burst pattern fits within
+the B-series credit ceiling before applying.
+
+`recommended_sku` is informational — it is **not** the same as
+`target_sku` (the same-family ladder target). A VM can have both: e.g.
+`Standard_D4_v3` → `target_sku=Standard_D2_v3` (downsize ladder),
+`recommended_sku=Standard_D4as_v5` (family modernization).
 
 ## Why peak-aware matters — and where Advisor falls short
 

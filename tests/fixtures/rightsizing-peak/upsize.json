@@ -1,5 +1,5 @@
 {
-  "_doc": "P95 CPU above 80% → UPSIZE_WARNING. No target_sku in this engine (upsize ladder is roadmap).",
+  "_doc": "P95 CPU above 80% → UPSIZE verdict with target SKU from upsize ladder.",
   "vm": {
     "subscription_id": "00000000-0000-0000-0000-000000000001",
     "resource_group": "rg-test",
@@ -13,7 +13,8 @@
   "cpu_avg": 65.0,
   "cpu_max": 92.0,
   "mem_used_pct": 70.0,
-  "expected_verdict": "UPSIZE_WARNING",
+  "expected_verdict": "UPSIZE",
   "expected_confidence": "HIGH",
-  "expected_target_sku": ""
+  "expected_target_sku": "Standard_D8ds_v5"
 }
+

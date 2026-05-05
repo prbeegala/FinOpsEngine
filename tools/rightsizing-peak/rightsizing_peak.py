@@ -126,6 +126,111 @@ DOWNSIZE_LADDER = {
     "Standard_L16s": "Standard_L8s",
 }
 
+# Family upsize ladders (one step larger in same family/generation).
+# Mirror of DOWNSIZE_LADDER. Engine only proposes a target SKU if it's in
+# this map; otherwise it emits the verdict (UPSIZE) but leaves target_sku
+# blank for manual review.
+UPSIZE_LADDER = {
+    # D/Ds v3
+    "Standard_D2_v3": "Standard_D4_v3",
+    "Standard_D4_v3": "Standard_D8_v3",
+    "Standard_D2s_v3": "Standard_D4s_v3",
+    "Standard_D4s_v3": "Standard_D8s_v3",
+    "Standard_DS2_v2": "Standard_DS3_v2",
+    "Standard_DS4_v2": "Standard_DS5_v2",
+    # D v4 / v5
+    "Standard_D2_v4": "Standard_D4_v4",
+    "Standard_D4_v4": "Standard_D8_v4",
+    "Standard_D2ds_v5": "Standard_D4ds_v5",
+    "Standard_D4ds_v5": "Standard_D8ds_v5",
+    "Standard_D8ds_v5": "Standard_D16ds_v5",
+    "Standard_D2ads_v5": "Standard_D4ads_v5",
+    "Standard_D4ads_v5": "Standard_D8ads_v5",
+    "Standard_D8ads_v5": "Standard_D16ads_v5",
+    # E series
+    "Standard_E2ds_v4": "Standard_E4ds_v4",
+    "Standard_E4ds_v4": "Standard_E8ds_v4",
+    "Standard_E8ds_v4": "Standard_E16ds_v4",
+    "Standard_E2ds_v5": "Standard_E4ds_v5",
+    "Standard_E4ds_v5": "Standard_E8ds_v5",
+    "Standard_E8ds_v5": "Standard_E16ds_v5",
+    "Standard_E2ads_v5": "Standard_E4ads_v5",
+    "Standard_E4ads_v5": "Standard_E8ads_v5",
+    "Standard_E4as_v5": "Standard_E8as_v5",
+    "Standard_E8as_v5": "Standard_E16as_v5",
+    # F series
+    "Standard_F2s_v2": "Standard_F4s_v2",
+    "Standard_F4s_v2": "Standard_F8s_v2",
+    "Standard_F8s_v2": "Standard_F16s_v2",
+    # B series
+    "Standard_B2ms": "Standard_B4ms",
+    "Standard_B4ms": "Standard_B8ms",
+    # L series
+    "Standard_L4s": "Standard_L8s",
+    "Standard_L8s": "Standard_L16s",
+}
+
+# SKU-family modernization swaps. Maps an older-generation SKU to a
+# modern AMD (`asv5`) equivalent at the same vCPU/memory shape, which
+# typically saves 10–20% at equal or better performance. Source: Azure
+# VM pricing pages (compare retail $/hr for the source vs target SKU in
+# the same region; Dasv5 / Easv5 are consistently cheaper than the
+# corresponding Dv3 / DSv2 / Ev3 SKUs at matching size).
+SKU_FAMILY_SWAP = {
+    # Dv3 / Dsv3 → Dasv5 (AMD EPYC, premium SSD)
+    "Standard_D2_v3":  "Standard_D2as_v5",
+    "Standard_D4_v3":  "Standard_D4as_v5",
+    "Standard_D8_v3":  "Standard_D8as_v5",
+    "Standard_D16_v3": "Standard_D16as_v5",
+    "Standard_D2s_v3":  "Standard_D2as_v5",
+    "Standard_D4s_v3":  "Standard_D4as_v5",
+    "Standard_D8s_v3":  "Standard_D8as_v5",
+    "Standard_D16s_v3": "Standard_D16as_v5",
+    # Older DSv2 → Dasv5
+    "Standard_DS2_v2": "Standard_D2as_v5",
+    "Standard_DS3_v2": "Standard_D4as_v5",
+    "Standard_DS4_v2": "Standard_D8as_v5",
+    "Standard_DS5_v2": "Standard_D16as_v5",
+    # Ev3 / Esv3 → Easv5 (memory-optimized AMD)
+    "Standard_E2_v3":  "Standard_E2as_v5",
+    "Standard_E4_v3":  "Standard_E4as_v5",
+    "Standard_E8_v3":  "Standard_E8as_v5",
+    "Standard_E16_v3": "Standard_E16as_v5",
+    "Standard_E2s_v3":  "Standard_E2as_v5",
+    "Standard_E4s_v3":  "Standard_E4as_v5",
+    "Standard_E8s_v3":  "Standard_E8as_v5",
+    "Standard_E16s_v3": "Standard_E16as_v5",
+    # Dv4 → Dasv5 (Dv4 is Intel; Dasv5 typically cheaper at same shape)
+    "Standard_D2_v4": "Standard_D2as_v5",
+    "Standard_D4_v4": "Standard_D4as_v5",
+    "Standard_D8_v4": "Standard_D8as_v5",
+}
+
+# Low-duty-cycle swap to B-series. Applied only when a VM is already a
+# DOWNSIZE_CANDIDATE *and* CPU P95 max is below LOW_DUTY_CPU_P95_MAX,
+# meaning the workload is bursty/idle enough that B-series credit
+# accounting will be a net win.
+LOW_DUTY_CPU_P95_MAX = 15.0
+LOW_DUTY_B_SWAP = {
+    # Map source SKU shape → B-series equivalent at the same vCPU/memory.
+    # Only includes shapes where a B-series SKU exists at matching capacity.
+    "Standard_D2s_v3":   "Standard_B2ms",
+    "Standard_D2_v3":    "Standard_B2ms",
+    "Standard_D2ds_v5":  "Standard_B2ms",
+    "Standard_D2ads_v5": "Standard_B2ms",
+    "Standard_D4s_v3":   "Standard_B4ms",
+    "Standard_D4_v3":    "Standard_B4ms",
+    "Standard_D4ds_v5":  "Standard_B4ms",
+    "Standard_D4ads_v5": "Standard_B4ms",
+    "Standard_D8s_v3":   "Standard_B8ms",
+    "Standard_D8_v3":    "Standard_B8ms",
+    "Standard_D8ds_v5":  "Standard_B8ms",
+    "Standard_D8ads_v5": "Standard_B8ms",
+    "Standard_DS2_v2":   "Standard_B2ms",
+    "Standard_DS3_v2":   "Standard_B4ms",
+    "Standard_DS4_v2":   "Standard_B8ms",
+}
+
 # Resource Graph query — non-managed VMs only
 VM_QUERY = """
 Resources
@@ -168,6 +273,7 @@ class VmRecord:
     verdict: str = "UNKNOWN"
     confidence: str = ""
     target_sku: str = ""
+    recommended_sku: str = ""
     rationale: str = ""
     advisor_says: str = ""
     advisor_unsafe: bool = False
@@ -335,11 +441,12 @@ def analyse_vm(vm: VmRecord, *, days: int,
 
     if (cpu95 >= DECISION_RULES["upsize_cpu_p95_min"]
             or mem95 >= DECISION_RULES["upsize_mem_p95_min"]):
-        vm.verdict = "UPSIZE_WARNING"
+        vm.verdict = "UPSIZE"
         vm.confidence = "HIGH"
+        vm.target_sku = UPSIZE_LADDER.get(vm.vm_size, "")
         vm.rationale = (
-            f"P95 CPU {cpu95}% / P95 Mem {mem95}% — already at peak headroom. "
-            f"Do NOT downsize; consider upsize or scale-out."
+            f"P95 CPU {cpu95}% / P95 Mem {mem95}% — sustained over upsize "
+            f"threshold. Recommend upsize or scale-out; do NOT downsize."
         )
     elif (cpu95 < DECISION_RULES["downsize_cpu_p95_max"]
           and mem95 < DECISION_RULES["downsize_mem_p95_max"]):
@@ -361,6 +468,17 @@ def analyse_vm(vm: VmRecord, *, days: int,
             f"P95 CPU {cpu95}% / P95 Mem {mem95}% — between thresholds; "
             f"current size is appropriate."
         )
+
+    # SKU-family swap recommendation (independent of verdict).
+    # Priority: low-duty B-series swap (only for clear DOWNSIZE candidates
+    # with very low CPU P95) > family modernization (Dv3 → Dasv5 etc).
+    if (vm.verdict == "DOWNSIZE_CANDIDATE"
+            and cpu95 < LOW_DUTY_CPU_P95_MAX
+            and vm.vm_size in LOW_DUTY_B_SWAP):
+        vm.recommended_sku = LOW_DUTY_B_SWAP[vm.vm_size]
+    elif vm.vm_size in SKU_FAMILY_SWAP:
+        vm.recommended_sku = SKU_FAMILY_SWAP[vm.vm_size]
+
     return vm
 
 
@@ -424,7 +542,7 @@ def write_md_report(vms: list[VmRecord], sub_name: str, path: Path,
         "| Verdict | Count |",
         "|---|---:|",
     ]
-    for k in ["DOWNSIZE_CANDIDATE", "KEEP", "UPSIZE_WARNING",
+    for k in ["DOWNSIZE_CANDIDATE", "KEEP", "UPSIZE",
               "INSUFFICIENT_DATA", "UNKNOWN"]:
         if counts.get(k, 0):
             lines.append(f"| {k} | {counts[k]} |")
@@ -466,18 +584,42 @@ def write_md_report(vms: list[VmRecord], sub_name: str, path: Path,
             )
         lines.append("")
 
-    upsize = [v for v in vms if v.verdict == "UPSIZE_WARNING"]
+    upsize = [v for v in vms if v.verdict == "UPSIZE"]
     if upsize:
         lines += [
-            "## Capacity-headroom warnings (do not downsize)",
+            "## Upsize candidates (sustained peak headroom — do not downsize)",
             "",
-            "| VM | SKU | P95 CPU | P95 Mem | Rationale |",
+            "| VM | Current → Target | P95 CPU | P95 Mem | Rationale |",
             "|---|---|---:|---:|---|",
         ]
         for v in upsize:
+            tgt = v.target_sku or "_(no ladder match — review manually)_"
             lines.append(
-                f"| `{v.name}` | {v.vm_size} | {v.cpu_p95_max}% | "
-                f"{v.mem_used_p95}% | {v.rationale} |"
+                f"| `{v.name}` | {v.vm_size} → {tgt} | "
+                f"{v.cpu_p95_max}% | {v.mem_used_p95}% | {v.rationale} |"
+            )
+        lines.append("")
+
+    swap = [v for v in vms
+            if v.recommended_sku and v.recommended_sku != v.target_sku]
+    if swap:
+        lines += [
+            "## SKU-family swap suggestions",
+            "",
+            "Modernization opportunities independent of the up/downsize "
+            "verdict. Typical savings: 10–20% at equal or better "
+            "performance (Dv3/DSv2 → Dasv5, Ev3 → Easv5) or larger for "
+            "low-duty workloads moving to B-series.",
+            "",
+            "| VM | Verdict | Current → Recommended | P95 CPU | P95 Mem |",
+            "|---|---|---|---:|---:|",
+        ]
+        for v in swap:
+            cpu = f"{v.cpu_p95_max}%" if v.cpu_p95_max is not None else "—"
+            mem = f"{v.mem_used_p95}%" if v.mem_used_p95 is not None else "—"
+            lines.append(
+                f"| `{v.name}` | {v.verdict} | "
+                f"{v.vm_size} → {v.recommended_sku} | {cpu} | {mem} |"
             )
         lines.append("")
 
@@ -497,7 +639,7 @@ def write_md_report(vms: list[VmRecord], sub_name: str, path: Path,
         "- Excludes Databricks-managed (`databricks-rg-*`) and AKS node "
         "(`MC_*` / `aks-*`) VMs — those are managed by their parent service.",
         "- Advisor diff: any VM where Advisor recommends a downsize but "
-        "the engine emits `UPSIZE_WARNING` or `KEEP` is flagged as "
+        "the engine emits `UPSIZE` or `KEEP` is flagged as "
         "**advisor_unsafe**.",
         "",
         "_Generated by `rightsizing-peak`. Source: "
@@ -577,7 +719,7 @@ def run(subs: list[str], *, days: int, out_dir: Path,
             hit = adv.get(v.resource_id.lower())
             if hit:
                 v.advisor_says = hit
-                if v.verdict in ("UPSIZE_WARNING", "KEEP"):
+                if v.verdict in ("UPSIZE", "KEEP"):
                     v.advisor_unsafe = True
 
         csv_path = out_dir / f"{sub_name}-peak-rightsizing-{today}.csv"
@@ -616,28 +758,28 @@ def write_combined(summary: dict, out_dir: Path, today: str, days: int):
         "",
         "## Roll-up",
         "",
-        "| Subscription | VMs | Downsize | Keep | Upsize warn | Insufficient | Advisor unsafe |",
+        "| Subscription | VMs | Downsize | Keep | Upsize | Insufficient | Advisor unsafe |",
         "|---|---:|---:|---:|---:|---:|---:|",
     ]
     tot = {"vms": 0, "DOWNSIZE_CANDIDATE": 0, "KEEP": 0,
-           "UPSIZE_WARNING": 0, "INSUFFICIENT_DATA": 0, "advisor_unsafe": 0}
+           "UPSIZE": 0, "INSUFFICIENT_DATA": 0, "advisor_unsafe": 0}
     for s in summary["subscriptions"]:
         v = s["verdicts"]
         lines.append(
             f"| {s['name']} | {s['vms']} | "
             f"{v.get('DOWNSIZE_CANDIDATE',0)} | {v.get('KEEP',0)} | "
-            f"{v.get('UPSIZE_WARNING',0)} | "
+            f"{v.get('UPSIZE',0)} | "
             f"{v.get('INSUFFICIENT_DATA',0)} | {s['advisor_unsafe']} |"
         )
         tot["vms"] += s["vms"]
-        for k in ["DOWNSIZE_CANDIDATE", "KEEP", "UPSIZE_WARNING",
+        for k in ["DOWNSIZE_CANDIDATE", "KEEP", "UPSIZE",
                   "INSUFFICIENT_DATA"]:
             tot[k] += v.get(k, 0)
         tot["advisor_unsafe"] += s["advisor_unsafe"]
     lines.append(
         f"| **Total** | **{tot['vms']}** | "
         f"**{tot['DOWNSIZE_CANDIDATE']}** | **{tot['KEEP']}** | "
-        f"**{tot['UPSIZE_WARNING']}** | **{tot['INSUFFICIENT_DATA']}** | "
+        f"**{tot['UPSIZE']}** | **{tot['INSUFFICIENT_DATA']}** | "
         f"**{tot['advisor_unsafe']}** |"
     )
     lines += [
@@ -759,12 +901,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
                         "to HIGH confidence (default %(default)s).")
     g.add_argument("--upsize-cpu-p95-min", type=float,
                    default=DECISION_RULES["upsize_cpu_p95_min"],
-                   help="P95 CPU%% at or above this triggers UPSIZE_WARNING "
+                   help="P95 CPU%% at or above this triggers UPSIZE "
                         "(default %(default)s).")
     g.add_argument("--upsize-mem-p95-min", type=float,
                    default=DECISION_RULES["upsize_mem_p95_min"],
                    help="P95 memory-used%% at or above this triggers "
-                        "UPSIZE_WARNING (default %(default)s).")
+                        "UPSIZE (default %(default)s).")
     g.add_argument("--min-data-coverage", type=float,
                    default=DECISION_RULES["min_data_coverage"],
                    help="Fraction (0.0-1.0) of expected hourly samples "

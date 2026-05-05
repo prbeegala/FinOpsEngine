@@ -10,6 +10,20 @@ as detailed in [`VERSIONING.md`](./VERSIONING.md).
 
 ### Added
 
+- **`rightsizing-peak`: upsize targets and SKU-family swap suggestions
+  (issue [#9](https://github.com/prbeegala/FinOpsEngine/issues/9)).**
+  The engine now emits an `UPSIZE` verdict (replacing the old
+  `UPSIZE_WARNING`) with a recommended target SKU drawn from a new
+  `UPSIZE_LADDER` (mirror of the existing `DOWNSIZE_LADDER`). It also
+  populates a new CSV column, `recommended_sku`, with modernization
+  suggestions independent of the verdict — Dv3/DSv2 → Dasv5 and Ev3 →
+  Easv5 (typically 10–20% cheaper at matching shape), and a B-series
+  swap for `DOWNSIZE_CANDIDATE` VMs whose P95 CPU < 15% (low duty
+  cycle). The `--upsize-cpu-p95-min` / `--upsize-mem-p95-min` flags
+  drive the `UPSIZE` threshold (unchanged behaviour). README updated
+  with the swap tables. Existing `DOWNSIZE_CANDIDATE` / `KEEP` /
+  `INSUFFICIENT_DATA` verdicts are unchanged.
+
 - **Currency auto-detect across all engines (issue [#14](https://github.com/prbeegala/FinOpsEngine/issues/14)).**
   `hidden-waste`, `ri-coverage`, and `context-enricher` now call
   `az billing account list` once at startup, read the tenant's billing
