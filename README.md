@@ -90,7 +90,7 @@ python tools/hidden-waste/hidden_waste.py `
 python tools/ri-coverage/ri_coverage.py `
   --all-subs `
   --months 3 `
-  --refund-buffer-gbp 5000 `
+  --refund-buffer 5000 `
   --out-dir ./out/ri-coverage
 
 # 3. Join everything into per-owner remediation queues

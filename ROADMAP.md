@@ -72,16 +72,12 @@ Refinements to the existing four engines.
 - 🟢 **context-enricher: tag + YAML routing fallback** — today owners are
   resolved from `CODEOWNERS`. Add support for `owner=` / `costcenter=`
   Azure Tags and a YAML override file for orgs without `CODEOWNERS`.
-- 🟢 **Currency auto-detect via `az billing account list`** — today the
-  `£` glyph is hard-coded as a display label across all four engines,
-  and operators on USD / EUR / SEK / etc. tenants have to search-replace
-  the symbol in source. Read the billing account currency once at
-  startup, parameterise the display glyph (and the
-  `--refund-buffer-gbp` flag → `--refund-buffer`), and surface the
-  detected currency in the report headers. The numeric values are
-  already in the tenant's billing currency — this just stops the label
-  lying. Also closes the FAQ entry that points to the search-replace
-  workaround.
+- ~~🟢 **Currency auto-detect via `az billing account list`**~~ — shipped
+  in [#14](https://github.com/prbeegala/FinOpsEngine/issues/14). Engines
+  now read the billing currency once at startup and accept
+  `--currency-symbol` to override; `--refund-buffer-gbp` was renamed to
+  `--refund-buffer` (the GBP-suffixed alias still works for one
+  release).
 
 ## Issue lifecycle & dedupe 🛡
 

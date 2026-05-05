@@ -55,18 +55,32 @@ mis-tagged charges) is on the [roadmap](../ROADMAP.md).
 
 ### Why £? Can I make it $?
 
-The £ glyph is a display-only label in the engines. The numeric values come
-straight from your Azure billing currency. To change the display:
+By default, every engine calls `az billing account list` once at startup
+and renders amounts in the tenant's billing currency (USD, EUR, SEK,
+etc.). The numeric values themselves come straight from Azure Cost
+Management — only the glyph is local. If detection fails (no Billing
+Reader, offline run, multi-currency setup), the engine falls back to
+`£` and prints a one-line provenance message so you can spot it.
+
+To force a specific glyph (e.g. when you want consistent reports
+across multiple tenants, or you're billed in a currency Azure doesn't
+expose to the CLI):
 
 ```pwsh
-# From the repo root, swap £ for $ in all engine sources:
-(Get-ChildItem tools -Recurse -Include *.py).FullName | ForEach-Object {
-  (Get-Content $_ -Raw) -replace '£','$' | Set-Content $_
-}
+python tools\hidden-waste\hidden_waste.py    --currency-symbol '$' ...
+python tools\ri-coverage\ri_coverage.py      --currency-symbol '€' ...
+python tools\context-enricher\context_enricher.py --currency-symbol 'kr' ...
 ```
 
-A future release will read the billing account's currency via
-`az billing account list` and parameterise.
+The flag accepts any string, so multi-character glyphs like `kr`,
+`A$`, `NT$` work too. `rightsizing-peak` doesn't print money (it
+emits verdicts) so it doesn't take the flag.
+
+> **Note**: the engines do not perform FX conversion. Cost Management
+> already returns amounts in the tenant billing currency; we only
+> change the display glyph. If your tenant is genuinely multi-currency,
+> talk to your Microsoft account team about consolidating onto a
+> single MCA billing account first.
 
 ### Will the engines delete anything?
 

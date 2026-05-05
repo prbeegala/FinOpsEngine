@@ -94,7 +94,7 @@ jobs:
           python -u ri_coverage.py \
             --subs "$SUBS" \
             --months 3 \
-            --refund-buffer-gbp "$REFUND_BUFFER" \
+            --refund-buffer "$REFUND_BUFFER" \
             --out-dir "$OUT_BASE/RICoverage"
         continue-on-error: true
 

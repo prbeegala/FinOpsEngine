@@ -65,6 +65,14 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from html_sink import write_html, write_index  # noqa: E402
+from finops_currency import detect_currency  # noqa: E402
+
+# ---------------------------------------------------------------------------
+# Display currency (overridden in main() from CLI / billing-account auto-detect).
+# Defaults to GBP so existing fixtures / sample snapshots keep passing.
+# ---------------------------------------------------------------------------
+CURRENCY: str = "£"
+CURRENCY_ISO: str = "GBP"
 
 # ---------------------------------------------------------------------------
 # Subprocess helpers
@@ -883,8 +891,8 @@ def annotate_cost(finding: Finding, cost_map: dict[str, float],
 
 def gbp(x: float) -> str:
     if abs(x) >= 1000:
-        return f"£{x:,.0f}"
-    return f"£{x:,.2f}"
+        return f"{CURRENCY}{x:,.0f}"
+    return f"{CURRENCY}{x:,.2f}"
 
 
 def write_csv(path: Path, findings: list[Finding]) -> None:
@@ -919,13 +927,13 @@ def write_md(path: Path, findings: list[Finding], sub_count: int) -> None:
         "## Headline",
         "",
         f"- Total flagged resources: **{total_count:,}**",
-        f"- Estimated monthly £ recoverable (deletion or rightsizing): "
+        f"- Estimated monthly cost recoverable (deletion or rightsizing): "
         f"**{gbp(total_monthly)}**",
         f"- Annualised: **{gbp(total_monthly * 12)}**",
         "",
         "## By category",
         "",
-        "| Category | Count | Monthly £ | Annualised £ |",
+        "| Category | Count | Monthly cost | Annualised |",
         "|---|---:|---:|---:|",
     ]
     for cat in QUERIES.keys():
@@ -950,7 +958,7 @@ def write_md(path: Path, findings: list[Finding], sub_count: int) -> None:
         "",
         "## Top 25 individual offenders (across all categories)",
         "",
-        "| Sub | RG | Resource | Category | Monthly £ | Source |",
+        "| Sub | RG | Resource | Category | Monthly cost | Source |",
         "|---|---|---|---|---:|---|",
     ]
     for f in sorted(findings, key=lambda f: -f.monthly_gbp)[:25]:
@@ -962,7 +970,7 @@ def write_md(path: Path, findings: list[Finding], sub_count: int) -> None:
 
     lines += [
         "",
-        "## Recommended Azure Policy guardrails (top 3 by £)",
+        "## Recommended Azure Policy guardrails (top 3 by spend)",
         "",
         "Starter-pack JSON for the top 3 waste classes is in `policy/`. These "
         "are *audit-mode* policies — they flag new offenders without "
@@ -978,7 +986,7 @@ def write_md(path: Path, findings: list[Finding], sub_count: int) -> None:
         "",
         "## Cost-source notes",
         "",
-        "- `cost_mgmt` — actual £ from last 30 days of Cost Management.",
+        "- `cost_mgmt` — actual cost from last 30 days of Cost Management.",
         "- `estimate` — list-price estimate (used when Cost Management "
         "  has no data for that resource ID, e.g. never-attached disks).",
         "- `unknown` — no cost attribution available; verify manually.",
@@ -1402,7 +1410,7 @@ def run(subs: list[str], out_dir: Path,
     print(f"  - {tool_dir / 'policy'}/  (audit-mode policies for all "
           f"12 classes)")
     print(f"[engine] Total flagged: {len(raw_findings):,} resources, "
-          f"~£{total_monthly:,.0f}/mo (~£{total_monthly * 12:,.0f}/yr).")
+          f"~{gbp(total_monthly)}/mo (~{gbp(total_monthly * 12)}/yr).")
 
 
 def _resolve_subs(args) -> list[str]:
@@ -1481,7 +1489,26 @@ def main():
                          "candidates are dropped because they can't be "
                          "qualified without metrics. Storage refinement "
                          "may still query Azure Monitor metrics.")
+    ap.add_argument(
+        "--currency-symbol", type=str, default=None,
+        help="Override the auto-detected display currency glyph (e.g. "
+             "'$', '€', 'kr'). When omitted, the engine calls "
+             "`az billing account list` once to read the tenant's "
+             "billing currency and falls back to '£' on any failure.",
+    )
     args = ap.parse_args()
+    global CURRENCY, CURRENCY_ISO
+    sym, iso, source = detect_currency(args.currency_symbol)
+    CURRENCY = sym
+    CURRENCY_ISO = iso or CURRENCY_ISO
+    src_label = {
+        "override": "from --currency-symbol",
+        "billing-account": "from `az billing account list`",
+        "default": "default — set --currency-symbol or grant Billing "
+                   "Reader to silence this",
+    }.get(source, source)
+    print(f"[engine] Display currency: {CURRENCY} "
+          f"({CURRENCY_ISO or '?'}) — {src_label}")
     subs = _resolve_subs(args)
     run(subs, Path(args.out_dir),
         asp_idle_days=args.asp_idle_days,
