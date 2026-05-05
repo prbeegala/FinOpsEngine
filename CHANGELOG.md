@@ -10,6 +10,18 @@ as detailed in [`VERSIONING.md`](./VERSIONING.md).
 
 ### Added
 
+- **`hidden-waste`: three new storage detectors (issue [#1](https://github.com/prbeegala/FinOpsEngine/issues/1)).**
+  Adds `storage_cold_tier` (Hot-tier accounts with low transactions and
+  ≥100 GiB stored, refined via Azure Monitor `Transactions` /
+  `UsedCapacity` metrics), `storage_untouched_container` (blob containers
+  with `lastModifiedTime` ≥ 90 days — hygiene-only, no per-container CM
+  attribution), and `storage_oversize_premium` (premium file shares with
+  `shareQuota` ≥ 1 TiB and ≤ 50% utilisation, refined via per-share
+  `FileCapacity`). Each ships an audit-mode Azure Policy template; the
+  README, ROADMAP, and the by-category sample table are updated. Cost
+  source tagging follows the existing `cost_mgmt` / `estimate` /
+  `unknown` contract; no CSV column changes.
+
 - **Fixture-driven test infrastructure** under `tests/`:
   - `pyproject.toml` adds an optional `[test]` extra (pytest only; engines
     remain stdlib-only at runtime).

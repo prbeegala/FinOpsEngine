@@ -7,7 +7,7 @@ the guardrails.
 
 ## What it does
 
-1. Runs seven **Resource Graph** queries in a single pass across the supplied
+1. Runs ten **Resource Graph** queries in a single pass across the supplied
    subscriptions:
    - Unattached managed disks (`diskState =~ 'Unattached'` AND no `managedBy`).
    - Unused public IPs (no `ipConfiguration` AND no `natGateway`).
@@ -17,6 +17,16 @@ the guardrails.
    - Old snapshots (`timeCreated > 90 days` ago).
    - Empty App Service Plans (`numberOfSites == 0`).
    - Idle Standard load balancers (no rules AND no backend pools).
+   - Hot-tier storage accounts (`accessTier =~ 'Hot'`, GPv2 / blob kinds,
+     creation > 30 days). Refined by Azure Monitor metrics —
+     `Transactions` (Total, 30d) < 30,000 AND `UsedCapacity` (Average, 30d)
+     >= 100 GiB. If metrics are unavailable the candidate is kept and
+     tagged `metrics unavailable; verify manually`.
+   - Untouched blob containers (`lastModifiedTime` >= 90 days). Hygiene
+     finding only — Cost Management has no per-container dimension.
+   - Oversized premium file shares (parent `kind == 'FileStorage'`,
+     `shareQuota >= 1024 GiB`). Refined by `FileCapacity` per-share
+     (Average, 30d) — flagged when used <= 50% of quota.
 2. Pulls 30 days of **actual** £ from the Cost Management `/query` REST API
    (via `az rest`, body sent as a temp file — Windows-quoting-safe). Per-sub
    paging short-circuits as soon as every flagged resource is priced; capped
@@ -24,7 +34,9 @@ the guardrails.
 3. Falls back to **list-price estimates** when Cost Management has no row for
    a flagged resource (e.g. never-attached ASR replica disks, day-old
    snapshots). Disk pricing is hand-coded for P/E tiers in West Europe GBP;
-   Standard public IPs at £3 / mo; idle Standard LBs at £15 / mo.
+   Standard public IPs at £3 / mo; idle Standard LBs at £15 / mo; premium
+   files at £0.16 / GiB-month applied to the *recoverable* slice
+   (`shareQuota - actual_used`).
 4. Writes per-category **audit-mode Azure Policy** JSON into `policy/` so
    platform teams can promote the top-3 by £ to deny-mode after a 30-day
    audit cycle.
@@ -89,6 +101,19 @@ python hidden_waste.py `
   team should ratify the value before promoting the policy to deny.
 - **Orphan NICs almost never have a £ cost** — they're flagged for hygiene
   (privileged-NIC sprawl is an exfil risk) not for direct savings.
+- **Storage cold-tier signal is metric-based.** Without Azure Monitor
+  permissions the engine keeps Hot-tier candidates with an explicit
+  `metrics unavailable` tag; the operator must verify before action.
+  `Transactions` and `UsedCapacity` thresholds are conservative
+  (1,000 tx / day average, ≥ 100 GiB stored).
+- **Untouched blob containers carry no £ attribution.** Cost Management
+  doesn't break out cost by container — the parent storage account is the
+  smallest billable resource ID. Treat as a hygiene signal.
+- **Premium files £ savings are an estimate.** £0.16 / GiB-month is West
+  Europe LRS list price; multi-region or zone-redundant shares bill more.
+  The estimate uses the *recoverable* slice (`quota - actual_used`); when
+  `FileCapacity` metric is unavailable we fall back to the full
+  provisioned-line ceiling and tag the row clearly.
 - **No deletes performed.** Engine is read-only. Remediation is a separate
   decision owned by domain teams, gated by the audit-first / 30-day pattern.
 
