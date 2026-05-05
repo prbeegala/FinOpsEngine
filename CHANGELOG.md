@@ -10,6 +10,23 @@ as detailed in [`VERSIONING.md`](./VERSIONING.md).
 
 ### Added
 
+- **`hidden-waste`: PaaS rightsizing — under-utilised App Service Plans
+  and idle Container Apps (issue [#4](https://github.com/prbeegala/FinOpsEngine/issues/4)).**
+  Adds `idle_app_service_plan` (paid SKUs only — `Free` / `Shared` /
+  `Dynamic` / `ElasticPremium` excluded — refined by P95 of hourly
+  `CpuPercentage` Maximum over a configurable window) and
+  `idle_container_app` (`minReplicas >= 1` candidates whose total
+  `Requests` and average `Replicas` indicate warm but quiet workloads).
+  Both detectors **drop candidates when Azure Monitor metrics can't be
+  retrieved** (a deliberately different posture from storage detectors —
+  the ARG predicate alone is not waste-suspect on its own). Five new CLI
+  flags: `--asp-idle-cpu-p95-max` (default 5 %), `--asp-idle-days`
+  (default 14), `--ca-idle-requests-max` (default 0), `--ca-idle-days`
+  (default 14), `--skip-metrics` (skip the Monitor pass entirely; PaaS
+  candidates are dropped). Audit-mode Azure Policy templates ship for
+  both categories; README, ROADMAP, CHANGELOG, and the by-category
+  sample tables are updated. CSV schema unchanged.
+
 - **`hidden-waste`: three new storage detectors (issue [#1](https://github.com/prbeegala/FinOpsEngine/issues/1)).**
   Adds `storage_cold_tier` (Hot-tier accounts with low transactions and
   ≥100 GiB stored, refined via Azure Monitor `Transactions` /
