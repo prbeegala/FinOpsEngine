@@ -1476,10 +1476,11 @@ def main():
                     help="Container Apps observation window (days). "
                          "Default: 14.")
     ap.add_argument("--skip-metrics", action="store_true",
-                    help="Skip Azure Monitor metric calls. PaaS "
-                         "rightsizing candidates are dropped (they "
-                         "can't be qualified without metrics); storage "
-                         "detectors fall back to their own posture.")
+                    help="Skip Azure Monitor metric calls for metric-"
+                         "dependent PaaS rightsizing checks; those "
+                         "candidates are dropped because they can't be "
+                         "qualified without metrics. Storage refinement "
+                         "may still query Azure Monitor metrics.")
     args = ap.parse_args()
     subs = _resolve_subs(args)
     run(subs, Path(args.out_dir),
