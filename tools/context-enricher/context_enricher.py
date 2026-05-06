@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import fnmatch
 import json
 import os
 import re
@@ -206,6 +207,7 @@ class Finding:
     application: str = ""
     confidence: str = "LOW"
     rationale: str = ""
+    owner_source: str = "unrouted"  # 'yaml' | 'tag' | 'codeowners' | 'unrouted'
 
 
 def load_hidden_waste(path: Path) -> list[Finding]:
@@ -248,8 +250,174 @@ def load_rightsizing(path: Path) -> list[Finding]:
 
 
 # ---------------------------------------------------------------------------
+# Owner resolution: YAML override → Azure Tag → CODEOWNERS → unrouted
+# ---------------------------------------------------------------------------
+#
+# Why three sources?
+#   - YAML override file: maintained by the FinOps team for orgs that want
+#     a single hand-curated source of truth (highest priority — first hit wins).
+#   - Azure tags: the default, and the only source pre-existing in this engine.
+#   - CODEOWNERS: a path-glob fallback for orgs that already maintain one in
+#     their FinOps repo and don't want to duplicate it as a YAML override.
+#
+# The chosen source is recorded on each Finding and emitted in the per-row
+# ``owner_source`` column of the enriched CSV so downstream reviewers can see
+# *why* a row was routed to the team it was.
+
+
+def _parse_simple_yaml_overrides(text: str) -> list[dict[str, str]]:
+    """Parse a small YAML subset used by ``--owner-yaml``.
+
+    Accepted schema (2-space indent, no quotes required, # comments allowed):
+
+        overrides:
+          - resource_id: /subscriptions/.../foo
+            owner: team-x
+          - resource_group: rg-data
+            sub_name: sub-prod-a
+            owner: data-team
+
+    Each list item becomes a ``{key: value, ...}`` dict. All keys other
+    than ``owner`` are treated as match criteria; ``owner`` is the routing
+    target. Stdlib-only by design — install ``PyYAML`` and pass JSON if
+    you need fancier YAML features (JSON is a subset of YAML, so a
+    ``.json`` override file Just Works via ``json.load``).
+    """
+    rules: list[dict[str, str]] = []
+    in_overrides = False
+    current: dict[str, str] | None = None
+    for raw in text.splitlines():
+        # Strip comments & trailing whitespace.
+        line = raw.split("#", 1)[0].rstrip()
+        if not line.strip():
+            continue
+        stripped = line.lstrip()
+        indent = len(line) - len(stripped)
+        if indent == 0:
+            in_overrides = stripped.rstrip(":").strip() == "overrides"
+            if current is not None:
+                rules.append(current)
+                current = None
+            continue
+        if not in_overrides:
+            continue
+        if stripped.startswith("- "):
+            if current is not None:
+                rules.append(current)
+            current = {}
+            stripped = stripped[2:].lstrip()
+            if not stripped:
+                continue
+        if current is None or ":" not in stripped:
+            continue
+        k, _, v = stripped.partition(":")
+        current[k.strip().lower()] = v.strip().strip('"').strip("'")
+    if current is not None:
+        rules.append(current)
+    return rules
+
+
+def load_owner_yaml(path: Path) -> list[dict[str, str]]:
+    """Load ``--owner-yaml`` overrides as an ordered list of rules.
+
+    Supports a small YAML subset (see :func:`_parse_simple_yaml_overrides`)
+    and JSON files with the same schema (``{"overrides": [...]}``).
+    """
+    text = path.read_text(encoding="utf-8")
+    if path.suffix.lower() == ".json":
+        data = json.loads(text)
+        rules = data.get("overrides") if isinstance(data, dict) else data
+        if not isinstance(rules, list):
+            return []
+        out: list[dict[str, str]] = []
+        for r in rules:
+            if isinstance(r, dict):
+                out.append({str(k).lower(): str(v) for k, v in r.items()})
+        return out
+    return _parse_simple_yaml_overrides(text)
+
+
+def _yaml_rule_matches(rule: dict[str, str], f: Finding) -> bool:
+    """Return True if every match-criterion in ``rule`` matches ``f``.
+
+    Recognised criteria (all case-insensitive, glob-aware via fnmatch):
+    ``resource_id``, ``resource_group``, ``sub_name``, ``sub_id``, ``name``.
+    A rule with no recognised criteria never matches (defensive — avoids
+    a stray ``owner: foo`` line accidentally claiming every finding).
+    """
+    fields = {
+        "resource_id": f.resource_id,
+        "resource_group": f.resource_group,
+        "sub_name": f.sub_name,
+        "sub_id": f.sub_id,
+        "name": f.name,
+    }
+    matched_any = False
+    for key, want in rule.items():
+        if key == "owner" or not want:
+            continue
+        have = fields.get(key)
+        if have is None:
+            # Unknown key — treat as a non-match to be safe.
+            return False
+        matched_any = True
+        if not fnmatch.fnmatchcase((have or "").lower(), want.lower()):
+            return False
+    return matched_any
+
+
+def resolve_owner_from_yaml(f: Finding,
+                            rules: list[dict[str, str]]) -> str:
+    """First-rule-wins lookup against the loaded YAML overrides."""
+    for r in rules:
+        if _yaml_rule_matches(r, f) and r.get("owner"):
+            return r["owner"]
+    return ""
+
+
+def load_codeowners(path: Path) -> list[tuple[str, str]]:
+    """Parse a CODEOWNERS-style file into ``[(pattern, owner), ...]`` rules.
+
+    Each non-comment line is ``PATTERN  @owner1 @owner2 ...``. We keep the
+    first ``@owner`` (stripped of the leading ``@``) as the routing target;
+    additional reviewers are ignored — context-enricher routes to a single
+    owner-slug. Patterns are matched against the lowercased resource id
+    via ``fnmatch`` (so ``/subscriptions/*/disks/disk-*`` works).
+    """
+    rules: list[tuple[str, str]] = []
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.split("#", 1)[0].strip()
+        if not line:
+            continue
+        parts = line.split()
+        if len(parts) < 2:
+            continue
+        pattern = parts[0]
+        owner = next((p.lstrip("@") for p in parts[1:] if p.startswith("@")), "")
+        if owner:
+            rules.append((pattern, owner))
+    return rules
+
+
+def resolve_owner_from_codeowners(f: Finding,
+                                  rules: list[tuple[str, str]]) -> str:
+    """Last-rule-wins matching, the same precedence Git uses for CODEOWNERS."""
+    rid = (f.resource_id or "").lower()
+    if not rid or not rules:
+        return ""
+    match = ""
+    for pattern, owner in rules:
+        if fnmatch.fnmatchcase(rid, pattern.lower()):
+            match = owner
+    return match
+
+
+
+
+# ---------------------------------------------------------------------------
 # Enrichment & confidence
 # ---------------------------------------------------------------------------
+
 
 def first_match(tags: dict[str, str], keys: tuple[str, ...]) -> str:
     for k in keys:
@@ -262,12 +430,46 @@ def first_match(tags: dict[str, str], keys: tuple[str, ...]) -> str:
     return ""
 
 
-def classify(f: Finding) -> None:
-    f.owner       = first_match(f.tags, OWNER_KEYS)
+def classify(f: Finding,
+             *,
+             owner_tag_keys: tuple[str, ...] = OWNER_KEYS,
+             yaml_rules: list[dict[str, str]] | None = None,
+             codeowners_rules: list[tuple[str, str]] | None = None) -> None:
+    """Populate context fields and resolve owner via the routing chain.
+
+    Resolution chain (first hit wins, recorded on ``f.owner_source``):
+
+      1. ``yaml``        — ``--owner-yaml`` override file (FinOps-curated)
+      2. ``tag``         — Azure resource tags (``owner_tag_keys`` order)
+      3. ``codeowners``  — ``--codeowners`` path-glob fallback
+      4. ``unrouted``    — no source produced an owner
+
+    The non-owner context fields (criticality, environment, cost-centre,
+    application) always come from tags — only the owner has the override
+    chain because that's what the issue asked for and what's used for
+    routing.
+    """
     f.criticality = first_match(f.tags, CRITICALITY_KEYS)
     f.environment = first_match(f.tags, ENVIRONMENT_KEYS)
     f.cost_centre = first_match(f.tags, COSTCENTRE_KEYS)
     f.application = first_match(f.tags, APP_KEYS)
+
+    # 1. YAML override.
+    owner = resolve_owner_from_yaml(f, yaml_rules) if yaml_rules else ""
+    source = "yaml" if owner else ""
+    # 2. Azure tag.
+    if not owner:
+        owner = first_match(f.tags, owner_tag_keys)
+        if owner:
+            source = "tag"
+    # 3. CODEOWNERS.
+    if not owner and codeowners_rules:
+        owner = resolve_owner_from_codeowners(f, codeowners_rules)
+        if owner:
+            source = "codeowners"
+    # 4. Unrouted.
+    f.owner = owner
+    f.owner_source = source or "unrouted"
 
     has_owner = bool(f.owner)
     has_crit  = bool(f.criticality)
@@ -306,17 +508,17 @@ def slug(s: str) -> str:
 def write_enriched_csv(path: Path, findings: list[Finding]) -> None:
     fields = ["source", "category", "sub_name", "resource_group", "name",
               "resource_id", "monthly_gbp", "annual_savings_gbp",
-              "owner", "criticality", "environment", "cost_centre",
-              "application", "confidence", "rationale", "extra"]
+              "owner", "owner_source", "criticality", "environment",
+              "cost_centre", "application", "confidence", "rationale", "extra"]
     with open(path, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
         w.writerow(fields)
         for v in findings:
             w.writerow([v.source, v.category, v.sub_name, v.resource_group,
                         v.name, v.resource_id, f"{v.monthly_gbp:.2f}",
-                        f"{v.annual_savings_gbp:.2f}", v.owner, v.criticality,
-                        v.environment, v.cost_centre, v.application,
-                        v.confidence, v.rationale, v.extra])
+                        f"{v.annual_savings_gbp:.2f}", v.owner, v.owner_source,
+                        v.criticality, v.environment, v.cost_centre,
+                        v.application, v.confidence, v.rationale, v.extra])
 
 
 def write_summary_md(path: Path, findings: list[Finding]) -> None:
@@ -457,7 +659,10 @@ def run(hidden_waste_csv: Path | None,
         rightsizing_csv: Path | None,
         out_dir: Path,
         *,
-        plan_only: bool = False) -> None:
+        plan_only: bool = False,
+        owner_yaml: Path | None = None,
+        owner_tag_keys: tuple[str, ...] | None = None,
+        codeowners: Path | None = None) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     # In plan-only (dry-run) mode we write the planned per-owner Issue
     # bodies to ``issues-planned/`` instead of ``issues/`` so the nightly
@@ -522,9 +727,33 @@ def run(hidden_waste_csv: Path | None,
           f"(batches of {GRAPH_BATCH})...", flush=True)
     tag_map = fetch_tags_for_ids(ids) if ids else {}
 
+    # Load owner-resolution sources (YAML override + CODEOWNERS fallback).
+    yaml_rules: list[dict[str, str]] = []
+    if owner_yaml:
+        try:
+            yaml_rules = load_owner_yaml(owner_yaml)
+            print(f"[enricher] Loaded {len(yaml_rules)} owner override(s) "
+                  f"from {owner_yaml}", flush=True)
+        except (OSError, ValueError) as e:
+            print(f"[enricher] WARN: could not read --owner-yaml "
+                  f"{owner_yaml}: {e}", flush=True)
+    codeowners_rules: list[tuple[str, str]] = []
+    if codeowners:
+        try:
+            codeowners_rules = load_codeowners(codeowners)
+            print(f"[enricher] Loaded {len(codeowners_rules)} CODEOWNERS "
+                  f"rule(s) from {codeowners}", flush=True)
+        except OSError as e:
+            print(f"[enricher] WARN: could not read --codeowners "
+                  f"{codeowners}: {e}", flush=True)
+    tag_keys = owner_tag_keys or OWNER_KEYS
+
     for f in findings:
         f.tags = tag_map.get(f.resource_id.lower(), {})
-        classify(f)
+        classify(f,
+                 owner_tag_keys=tag_keys,
+                 yaml_rules=yaml_rules,
+                 codeowners_rules=codeowners_rules)
 
     # Output.
     date = datetime.now(timezone.utc).strftime("%Y%m%d")
@@ -563,6 +792,14 @@ def run(hidden_waste_csv: Path | None,
     high_gbp = sum(f.monthly_gbp for f in findings if f.confidence == "HIGH")
     print(f"[enricher] Confidence: HIGH={high} ({CURRENCY}{high_gbp:,.0f}/mo), "
           f"MED={med}, LOW={low}.")
+    src_counts: dict[str, int] = defaultdict(int)
+    for f in findings:
+        src_counts[f.owner_source] += 1
+    src_summary = ", ".join(f"{k}={src_counts[k]}"
+                            for k in ("yaml", "tag", "codeowners", "unrouted")
+                            if src_counts[k])
+    if src_summary:
+        print(f"[enricher] Owner sources: {src_summary}.")
 
 
 def main():
@@ -589,6 +826,28 @@ def main():
              "`az billing account list` once to read the tenant's "
              "billing currency and falls back to '£' on any failure.",
     )
+    ap.add_argument(
+        "--owner-yaml", type=Path, default=None,
+        help="Path to a YAML (or JSON) override file listing per-resource "
+             "/ per-RG / per-subscription owner overrides. Highest priority "
+             "in the resolution chain (YAML → tag → CODEOWNERS → unrouted). "
+             "See tools/context-enricher/README.md for the schema.",
+    )
+    ap.add_argument(
+        "--owner-tag-keys", type=str, default=None,
+        help="Comma-separated, case-insensitive list of Azure tag keys to "
+             "consult when resolving owners from tags (e.g. "
+             "'owner,costcenter,team'). Overrides the built-in OWNER_KEYS "
+             "tuple — useful for orgs with a non-default tag taxonomy.",
+    )
+    ap.add_argument(
+        "--codeowners", type=Path, default=None,
+        help="Path to a CODEOWNERS-style file used as a last-resort routing "
+             "fallback when neither the YAML override nor a resource tag "
+             "produces an owner. Each line is 'PATTERN @owner1 [@owner2 ...]'; "
+             "the first @owner is the routing target and the pattern is glob-"
+             "matched against the lowercased Azure resource id.",
+    )
     args = ap.parse_args()
     if not args.hidden_waste_csv and not args.rightsizing_csv:
         ap.error("Provide at least one of --hidden-waste-csv / --rightsizing-csv.")
@@ -604,8 +863,15 @@ def main():
     }.get(source, source)
     print(f"[enricher] Display currency: {CURRENCY} "
           f"({CURRENCY_ISO or '?'}) — {src_label}")
+    tag_keys: tuple[str, ...] | None = None
+    if args.owner_tag_keys:
+        tag_keys = tuple(k.strip().lower() for k in args.owner_tag_keys.split(",")
+                         if k.strip())
     run(args.hidden_waste_csv, args.rightsizing_csv, args.out_dir,
-        plan_only=args.plan_only)
+        plan_only=args.plan_only,
+        owner_yaml=args.owner_yaml,
+        owner_tag_keys=tag_keys,
+        codeowners=args.codeowners)
 
 
 if __name__ == "__main__":
