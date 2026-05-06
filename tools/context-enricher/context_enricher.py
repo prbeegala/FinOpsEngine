@@ -61,21 +61,19 @@ CURRENCY_ISO: str = "GBP"
 
 # ---------------------------------------------------------------------------
 # Tag conventions — case-insensitive lookup, first match wins.
+# Single source of truth lives in ``tools/tag_keys.py``; re-exported
+# here so existing call-sites (and ``from context_enricher import
+# ENVIRONMENT_KEYS``) keep working.
 # ---------------------------------------------------------------------------
 
-OWNER_KEYS       = ("owned by", "managed by", "owner", "team", "domain",
-                    "approval group", "support group", "department",
-                    "responsibleteam", "ops_owner")
-CRITICALITY_KEYS = ("business criticality", "criticality", "service tier",
-                    "businesscriticality", "tier", "businesstier")
-ENVIRONMENT_KEYS = ("environment", "env")
-COSTCENTRE_KEYS  = ("cost centre", "cost center", "costcenter", "costcentre",
-                    "cost_centre", "cost_center")
-APP_KEYS         = ("service", "product", "application", "app", "appname",
-                    "applicationname", "project")
-
-# Placeholder values commonly used as placeholders that should be treated as "no value".
-TAG_PLACEHOLDERS = {"untagged", "n/a", "na", "tbc", "tbd", "none", "-", ""}
+from tag_keys import (  # noqa: E402
+    OWNER_KEYS,
+    CRITICALITY_KEYS,
+    ENVIRONMENT_KEYS,
+    COSTCENTRE_KEYS,
+    APP_KEYS,
+    TAG_PLACEHOLDERS,
+)
 
 # Confidence thresholds (£ / month).
 HIGH_GBP_FLOOR = 100.0

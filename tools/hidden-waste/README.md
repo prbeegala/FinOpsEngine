@@ -7,7 +7,7 @@ the guardrails.
 
 ## What it does
 
-1. Runs twelve **Resource Graph** queries in a single pass across the supplied
+1. Runs fifteen **Resource Graph** queries in a single pass across the supplied
    subscriptions:
    - Unattached managed disks (`diskState =~ 'Unattached'` AND no `managedBy`).
    - Unused public IPs (no `ipConfiguration` AND no `natGateway`).
@@ -37,19 +37,41 @@ the guardrails.
    - Oversized premium file shares (parent `kind == 'FileStorage'`,
      `shareQuota >= 1024 GiB`). Refined by `FileCapacity` per-share
      (Average, 30d) — flagged when used <= 50% of quota.
+   - **Dev/test VMs without auto-shutdown.** `environment` / `env` tag
+     in the canonical dev/test value list (`dev`, `test`, `qa`, `uat`,
+     `staging`, `preprod`, `sandbox`, `nonprod`, …), `PowerState/running`,
+     and **no** `microsoft.devtestlab/schedules` `ComputeVmShutdownTask`
+     (Enabled) targeting the VM. AKS-managed (`mc_*`) and Databricks
+     (`databricks-rg-*`) RGs and AKS-spawned (`aks-*`) names are
+     excluded. Refined by ≥ `--devtest-uptime-threshold` (default 0.95)
+     hourly Percentage CPU coverage over `--devtest-uptime-days`
+     (default 14) — same posture as `rightsizing-peak`. Missing metrics
+     keep the candidate, tagged `uptime=unknown`.
+   - **Dev/test SQL DBs not on Serverless.** `microsoft.sql/servers/databases`
+     with env-tag in the dev/test list and service tier not starting with
+     `GP_S_` — provisioned DTU/vCore tiers bill regardless of activity;
+     Serverless General-Purpose is the only auto-pause-capable option.
+   - **Dev/test AKS clusters always-on.** `microsoft.containerservice/managedclusters`
+     with env-tag in the dev/test list and `properties.powerState.code =~ 'Running'`.
+     Pause via `az aks stop`; control-plane and node-pool charges drop to
+     near-zero while stopped.
 2. Pulls 30 days of **actual** £ from the Cost Management `/query` REST API
    (via `az rest`, body sent as a temp file — Windows-quoting-safe). Per-sub
    paging short-circuits as soon as every flagged resource is priced; capped
-   at 5 pages × 5 000 rows for safety.
+   at 5 pages × 5 000 rows for safety. Dev/test categories scale the bill by
+   `108/168 ≈ 0.6429` (the wasted slice vs a 12h × 5d target cadence).
 3. Falls back to **list-price estimates** when Cost Management has no row for
    a flagged resource (e.g. never-attached ASR replica disks, day-old
    snapshots). Disk pricing is hand-coded for P/E tiers in West Europe GBP;
    Standard public IPs at £3 / mo; idle Standard LBs at £15 / mo; premium
    files at £0.16 / GiB-month applied to the *recoverable* slice
-   (`shareQuota - actual_used`).
+   (`shareQuota - actual_used`). Dev/test rows without a CM hit are reported
+   as `unknown` rather than fabricated.
 4. Writes per-category **audit-mode Azure Policy** JSON into `policy/` so
    platform teams can promote the top-3 by £ to deny-mode after a 30-day
-   audit cycle.
+   audit cycle. Dev/test detectors are tag/configuration-based rather than
+   resource-property based, so they don't ship a Policy template — the
+   top-3 selection skips them.
 
 ## Inputs
 

@@ -66,6 +66,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from html_sink import write_html, write_index  # noqa: E402
 from finops_currency import detect_currency  # noqa: E402
+from tag_keys import DEVTEST_ENV_VALUES  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Display currency (overridden in main() from CLI / billing-account auto-detect).
@@ -139,6 +140,13 @@ def az_rest(method: str, url: str, body: dict, max_retries: int = 6) -> dict:
 
 GRAPH_URL = ("https://management.azure.com/providers/Microsoft.ResourceGraph/"
              "resources?api-version=2022-10-01")
+
+# Comma-separated, single-quoted KQL list of dev/test environment-tag
+# values, sourced from the shared ``tag_keys`` module so this engine and
+# ``context-enricher`` can never drift. Embedded into the dev/test
+# detector queries below at module-import time.
+_DEVTEST_KQL: str = ",".join(
+    f"'{v}'" for v in sorted(DEVTEST_ENV_VALUES))
 
 QUERIES: dict[str, str] = {
     "unattached_disks": (
@@ -290,6 +298,82 @@ QUERIES: dict[str, str] = {
         "  id=tolower(id), "
         "  sku=accountSku, "
         "  sizeGb=quotaGb"
+    ),
+    # Dev/test auto-shutdown gap (issue #5) — VMs.
+    # ``tagsLow`` re-parses the tag bag with all keys/values lowercased so
+    # the env-tag lookup is case-insensitive (Azure tag keys are case-
+    # preserving but the convention varies per estate). Excludes managed
+    # node-pool RGs (``mc_*`` / ``databricks-rg-*``) and AKS-spawned VM
+    # names so customer-owned VMs are the only candidates. Left-anti
+    # joined against DevTestLab auto-shutdown schedules pointing at this
+    # VM's resource ID.
+    "devtest_no_shutdown_vm": (
+        "Resources "
+        "| where type =~ 'microsoft.devtestlab/schedules' "
+        "| where tostring(properties.taskType) =~ 'ComputeVmShutdownTask' "
+        "| where tostring(properties.status) =~ 'Enabled' "
+        "| extend target = tolower(tostring(properties.targetResourceId)) "
+        "| where isnotempty(target) "
+        "| distinct target "
+        "| join kind=rightanti ( "
+        "    Resources "
+        "    | where type =~ 'microsoft.compute/virtualmachines' "
+        "    | extend rgL = tolower(resourceGroup) "
+        "    | where rgL !startswith 'databricks-rg-' "
+        "    | where rgL !startswith 'mc_' "
+        "    | where tolower(name) !startswith 'aks-' "
+        "    | extend tagsLow = todynamic(tolower(tostring(tags))) "
+        "    | extend env_raw = tostring(coalesce(tagsLow.environment, "
+        "                                         tagsLow.env)) "
+        f"    | where env_raw in ({_DEVTEST_KQL}) "
+        "    | extend power = tostring("
+        "        properties.extended.instanceView.powerState.code) "
+        "    | where power == 'PowerState/running' "
+        "    | extend rid = tolower(id) "
+        "    | project subscriptionId, resourceGroup, name, location, "
+        "              rid, env_raw, "
+        "              vmSize = tostring(properties.hardwareProfile.vmSize) "
+        "  ) on $left.target == $right.rid "
+        "| project subscriptionId, resourceGroup, name, location, "
+        "  id=rid, sku=vmSize, extra=env_raw"
+    ),
+    # Dev/test auto-shutdown gap — Azure SQL DB.
+    # Provisioned (DTU/vCore) tiers bill regardless of activity; only the
+    # Serverless General-Purpose tier (``GP_S_*``) auto-pauses. Flag any
+    # env=dev/test database that isn't Serverless. ``master`` system
+    # databases are excluded — they're billed under the parent server
+    # SKU and aren't independently scalable.
+    "devtest_no_shutdown_sql": (
+        "Resources "
+        "| where type =~ 'microsoft.sql/servers/databases' "
+        "| where tolower(name) !endswith '/master' "
+        "| extend tagsLow = todynamic(tolower(tostring(tags))) "
+        "| extend env_raw = tostring(coalesce(tagsLow.environment, "
+        "                                     tagsLow.env)) "
+        f"| where env_raw in ({_DEVTEST_KQL}) "
+        "| extend tier = tostring(coalesce("
+        "        properties.currentServiceObjectiveName, sku.name)) "
+        "| where tier !startswith 'GP_S_' "
+        "| project subscriptionId, resourceGroup, name, location, "
+        "  id=tolower(id), sku=tier, extra=env_raw"
+    ),
+    # Dev/test auto-shutdown gap — AKS clusters.
+    # Clusters can be paused with ``az aks stop`` (frees the control-
+    # plane and node-pool charges). Flag dev/test clusters that are
+    # currently running.
+    "devtest_no_shutdown_aks": (
+        "Resources "
+        "| where type =~ 'microsoft.containerservice/managedclusters' "
+        "| extend tagsLow = todynamic(tolower(tostring(tags))) "
+        "| extend env_raw = tostring(coalesce(tagsLow.environment, "
+        "                                     tagsLow.env)) "
+        f"| where env_raw in ({_DEVTEST_KQL}) "
+        "| extend power = tostring(properties.powerState.code) "
+        "| where power =~ 'Running' "
+        "| project subscriptionId, resourceGroup, name, location, "
+        "  id=tolower(id), "
+        "  sku=tostring(coalesce(sku.tier, properties.agentPoolProfiles[0].vmSize)), "
+        "  extra=env_raw"
     ),
 }
 
@@ -674,6 +758,90 @@ def refine_paas_findings(raw: list["Finding"],
 
 
 
+# ---------------------------------------------------------------------------
+# Dev/test auto-shutdown gap (issue #5)
+# ---------------------------------------------------------------------------
+
+# Cadence target from the issue: 12h × 5 working days = 60h/week of
+# legitimate runtime versus 24×7 = 168h. Wasted ratio = 108/168.
+# Applied to the 30-day Cost Management bill for the resource.
+DEVTEST_WASTE_RATIO: float = 108.0 / 168.0
+
+# Uptime-evidence window for VMs. Mirrors ``rightsizing-peak``'s
+# 14-day Percentage CPU coverage check.
+DEVTEST_UPTIME_DAYS_DEFAULT: int = 14
+DEVTEST_UPTIME_THRESHOLD_DEFAULT: float = 0.95
+
+
+DEVTEST_VM_CAT = "devtest_no_shutdown_vm"
+DEVTEST_SQL_CAT = "devtest_no_shutdown_sql"
+DEVTEST_AKS_CAT = "devtest_no_shutdown_aks"
+DEVTEST_CATS = frozenset({
+    DEVTEST_VM_CAT, DEVTEST_SQL_CAT, DEVTEST_AKS_CAT,
+})
+
+
+def refine_devtest_findings(raw: list["Finding"],
+                            *,
+                            uptime_days: int,
+                            uptime_threshold: float,
+                            skip_metrics: bool = False) -> list["Finding"]:
+    """Confirm VM dev/test candidates have ≥``uptime_threshold`` 14d uptime.
+
+    Resource Graph already filters to ``PowerState/running`` (snapshot);
+    Azure Monitor's ``Percentage CPU`` (PT1H Average) coverage gives a
+    14-day signal that the VM is *consistently* running rather than
+    "happens to be on right now".
+
+    Best-effort: missing metrics (no permission / throttled) keep the
+    candidate with an explanatory ``extra`` so the report stays honest.
+    SQL and AKS candidates are passed through unchanged — their gap is
+    configurational (provisioned tier / cluster running), not duty-cycle.
+
+    With ``skip_metrics=True`` the metric pass is skipped entirely;
+    every VM candidate is kept and tagged ``metric-skipped``. Different
+    posture from PaaS — the env-tag + no-schedule pair *is* prima-facie
+    waste signal, so dropping silently would lose useful findings.
+    """
+    if not any(f.category in DEVTEST_CATS for f in raw):
+        return raw
+
+    expected = uptime_days * 24
+    metric_failures = 0
+    out: list["Finding"] = []
+    for f in raw:
+        if f.category != DEVTEST_VM_CAT:
+            out.append(f)
+            continue
+        if skip_metrics:
+            f.extra = f"{f.extra} | metric-skipped".strip(" |")
+            out.append(f)
+            continue
+        vals = az_metric_timeseries(
+            f.resource_id, metric="Percentage CPU",
+            aggregation="Average", days=uptime_days, interval="PT1H")
+        if vals is None:
+            metric_failures += 1
+            f.extra = f"{f.extra} | uptime=unknown".strip(" |")
+            out.append(f)
+            continue
+        coverage = (len(vals) / expected) if expected else 0.0
+        if coverage >= uptime_threshold:
+            f.extra = (f"{f.extra} | uptime "
+                       f"{coverage * 100:.0f}% / {uptime_days}d").strip(" |")
+            out.append(f)
+        # else drop — VM isn't actually always-on
+
+    if metric_failures:
+        print(f"  ⚠ {metric_failures} dev/test VM(s) kept without uptime "
+              f"verification (metrics unavailable; check Monitoring "
+              f"Reader RBAC).", flush=True)
+    return out
+
+
+
+
+
 def fetch_resource_costs(sub_id: str, days: int = 30,
                          wanted: set[str] | None = None,
                          max_pages: int = 5) -> dict[str, float]:
@@ -813,6 +981,9 @@ CATEGORY_LABELS = {
     "storage_cold_tier":          "Hot-tier storage accounts (cold workload)",
     "storage_untouched_container": "Untouched blob containers (>90d)",
     "storage_oversize_premium":   "Oversized premium file shares",
+    "devtest_no_shutdown_vm":     "Dev/test VMs without auto-shutdown",
+    "devtest_no_shutdown_sql":    "Dev/test SQL DBs not on Serverless tier",
+    "devtest_no_shutdown_aks":    "Dev/test AKS clusters always-on",
 }
 
 
@@ -821,7 +992,13 @@ def annotate_cost(finding: Finding, cost_map: dict[str, float],
     rid = finding.resource_id.lower()
     if rid in cost_map and cost_map[rid] > 0:
         # last-N-days cost → monthly equivalent
-        finding.monthly_gbp = cost_map[rid] * 30.0 / max(days, 1)
+        monthly = cost_map[rid] * 30.0 / max(days, 1)
+        if finding.category in DEVTEST_CATS:
+            # Only the "wasted" slice (24×7 today vs 12h × 5d target)
+            # is recoverable — see DEVTEST_WASTE_RATIO.
+            finding.monthly_gbp = monthly * DEVTEST_WASTE_RATIO
+        else:
+            finding.monthly_gbp = monthly
         finding.cost_source = "cost_mgmt"
         return
     # fallbacks per category
@@ -878,6 +1055,12 @@ def annotate_cost(finding: Finding, cost_map: dict[str, float],
     elif finding.category == "idle_container_app":
         # Same posture as idle_app_service_plan — CM has CA resource
         # IDs but the consumption-vs-dedicated split can hide rows.
+        finding.monthly_gbp = 0.0
+        finding.cost_source = "unknown"
+    elif finding.category in DEVTEST_CATS:
+        # Cost Management had no row for the resource — common for
+        # newly-deployed dev/test workloads or those under
+        # consolidated-billing children. Don't fabricate savings.
         finding.monthly_gbp = 0.0
         finding.cost_source = "unknown"
     else:
@@ -946,10 +1129,13 @@ def write_md(path: Path, findings: list[Finding], sub_count: int) -> None:
             f"{gbp(c_total)} | {gbp(c_total * 12)} |"
         )
 
-    # Top 3 worst classes for Azure Policy starter pack
+    # Top 3 worst classes for Azure Policy starter pack — only those
+    # that have a template (env-tag categories don't lend themselves to
+    # a clean Policy rule, so they're excluded from this section).
     cat_costs = sorted(
         ((cat, sum(f.monthly_gbp for f in by_cat.get(cat, [])))
-         for cat in QUERIES.keys() if by_cat.get(cat)),
+         for cat in QUERIES.keys()
+         if by_cat.get(cat) and cat in POLICY_TEMPLATES),
         key=lambda t: -t[1],
     )
     top3 = [c for c, _ in cat_costs[:3]]
@@ -1299,6 +1485,8 @@ def run(subs: list[str], out_dir: Path,
         asp_idle_cpu_p95_max: float = ASP_IDLE_CPU_P95_MAX_DEFAULT,
         ca_idle_days: int = CA_IDLE_DAYS_DEFAULT,
         ca_idle_requests_max: int = CA_IDLE_REQUESTS_MAX_DEFAULT,
+        devtest_uptime_days: int = DEVTEST_UPTIME_DAYS_DEFAULT,
+        devtest_uptime_threshold: float = DEVTEST_UPTIME_THRESHOLD_DEFAULT,
         skip_metrics: bool = False):
     out_dir.mkdir(parents=True, exist_ok=True)
     date = datetime.now(timezone.utc).strftime("%Y%m%d")
@@ -1356,6 +1544,21 @@ def run(subs: list[str], out_dir: Path,
             skip_metrics=skip_metrics,
         )
 
+    # Dev/test auto-shutdown gap (issue #5): VMs already passed the
+    # PowerState/running snapshot in ARG; verify ≥95% uptime over the
+    # last 14 days via Percentage CPU coverage. SQL/AKS pass through
+    # unchanged — their gap is configurational.
+    if any(f.category in DEVTEST_CATS for f in raw_findings):
+        print("[engine] Verifying dev/test VM uptime via Azure Monitor "
+              "(best-effort; missing metrics are kept and tagged)…",
+              flush=True)
+        raw_findings = refine_devtest_findings(
+            raw_findings,
+            uptime_days=devtest_uptime_days,
+            uptime_threshold=devtest_uptime_threshold,
+            skip_metrics=skip_metrics,
+        )
+
     # Enrich with actual £ from Cost Management (one query per sub,
     # short-circuited as soon as every flagged resource for that sub
     # has been priced).
@@ -1398,7 +1601,8 @@ def run(subs: list[str], out_dir: Path,
          for cat in QUERIES.keys()),
         key=lambda t: -t[1],
     )
-    top3 = [c for c, v in cat_costs[:3] if v > 0]
+    top3 = [c for c, v in cat_costs[:3]
+            if v > 0 and c in POLICY_TEMPLATES]
     tool_dir = Path(__file__).resolve().parent
     write_policy_starter_pack(tool_dir, top3)
 
@@ -1407,8 +1611,8 @@ def run(subs: list[str], out_dir: Path,
     print(f"  - {md_path}")
     print(f"  - {html_path}")
     print(f"  - {csv_path}")
-    print(f"  - {tool_dir / 'policy'}/  (audit-mode policies for all "
-          f"12 classes)")
+    print(f"  - {tool_dir / 'policy'}/  (audit-mode policies for "
+          f"{len(POLICY_TEMPLATES)} classes)")
     print(f"[engine] Total flagged: {len(raw_findings):,} resources, "
           f"~{gbp(total_monthly)}/mo (~{gbp(total_monthly * 12)}/yr).")
 
@@ -1483,6 +1687,15 @@ def main():
                     default=CA_IDLE_DAYS_DEFAULT,
                     help="Container Apps observation window (days). "
                          "Default: 14.")
+    ap.add_argument("--devtest-uptime-days", type=int,
+                    default=DEVTEST_UPTIME_DAYS_DEFAULT,
+                    help="Window (days) used to confirm dev/test VMs "
+                         "are consistently running. Default: 14.")
+    ap.add_argument("--devtest-uptime-threshold", type=float,
+                    default=DEVTEST_UPTIME_THRESHOLD_DEFAULT,
+                    help="Min fraction of hourly Percentage CPU samples "
+                         "required to flag a dev/test VM as always-on "
+                         "(0.0–1.0). Default: 0.95.")
     ap.add_argument("--skip-metrics", action="store_true",
                     help="Skip Azure Monitor metric calls for metric-"
                          "dependent PaaS rightsizing checks; those "
@@ -1515,6 +1728,8 @@ def main():
         asp_idle_cpu_p95_max=args.asp_idle_cpu_p95_max,
         ca_idle_days=args.ca_idle_days,
         ca_idle_requests_max=args.ca_idle_requests_max,
+        devtest_uptime_days=args.devtest_uptime_days,
+        devtest_uptime_threshold=args.devtest_uptime_threshold,
         skip_metrics=args.skip_metrics)
 
 
