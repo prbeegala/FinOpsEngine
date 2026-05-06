@@ -89,8 +89,8 @@ tenant's billing currency.
 
 ## Outputs
 
-- `enriched-<date>.csv` — every finding with owner / criticality / env /
-  cost-centre / application / confidence / rationale.
+- `enriched-<date>.csv` — every finding with owner / owner_source /
+  criticality / env / cost-centre / application / confidence / rationale.
 - `enriched-<date>.md` — confidence breakdown, top-25, tagging-debt tail.
 - `issues/<owner-slug>-<date>.md` — per-owner Issue body, ready for
   `gh issue create -F`. Each body links back to the source engine and
@@ -112,6 +112,60 @@ COSTCENTRE_KEYS  = ("cost centre", "cost center", ...)
 APP_KEYS         = ("service", "product", "application", ...)
 TAG_PLACEHOLDERS = {"untagged", "n/a", "na", "tbc", "tbd", "none", "-", ""}
 ```
+
+For one-off overrides (e.g. an org without a clean tag taxonomy), pass
+`--owner-tag-keys "owner,costcenter,team"` on the CLI to swap the
+`OWNER_KEYS` tuple at runtime — no code edit required.
+
+## Owner-resolution chain
+
+Owners are resolved per-finding via a four-step chain, **first hit wins**.
+The decision is recorded in the per-row `owner_source` column of the
+enriched CSV so reviewers can see *why* a row was routed to the team it
+was:
+
+| Priority | Source        | Flag                | When to use it                                                 |
+|---------:|---------------|---------------------|----------------------------------------------------------------|
+| 1        | YAML override | `--owner-yaml`      | A FinOps-team-curated mapping; overrides everything else.       |
+| 2        | Azure tag     | `--owner-tag-keys`  | The default; relies on resource tags (`Owner`, `Team`, …).      |
+| 3        | CODEOWNERS    | `--codeowners`      | Last-resort path-glob fallback for orgs without clean tagging.  |
+| 4        | _unrouted_    | —                   | No source produced an owner; ends up in the LOW band.           |
+
+### `--owner-yaml <path>` schema
+
+A small YAML subset (no third-party deps; `.json` files with the same
+schema also work). Each rule is a flat dict — every key other than
+`owner` is a match criterion (`resource_id`, `resource_group`,
+`sub_name`, `sub_id`, `name`); all criteria must match (case-insensitive
+glob via `fnmatch`) for the rule to fire.
+
+```yaml
+overrides:
+  # Exact resource-id match (use globs for prefixes / wildcards).
+  - resource_id: /subscriptions/*/resourcegroups/rg-app-data/*
+    owner: data-platform
+  # Match every resource in a resource group.
+  - resource_group: rg-shared-network
+    owner: network-team
+  # Subscription-wide default.
+  - sub_name: sub-sandbox-*
+    owner: platform-engineering
+```
+
+### `--codeowners <path>` schema
+
+Standard `PATTERN @owner1 [@owner2 ...]` lines. The first `@owner` (with
+the `@` stripped) is the routing target; additional reviewers are
+ignored. Patterns are glob-matched against the **lowercased Azure
+resource id** (last-rule-wins, mirroring Git's CODEOWNERS precedence):
+
+```text
+# .github/CODEOWNERS
+*publicipaddresses*                                @your-org/network-team
+/subscriptions/*/resourcegroups/rg-snap-*/*        @your-org/storage
+```
+
+### Wiring the per-owner Issues to GitHub teams
 
 To wire the per-owner issues to GitHub teams, add a `CODEOWNERS` entry that
 maps the slug (lower-cased, non-alphanumeric collapsed to `-`) to the team:
